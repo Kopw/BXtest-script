@@ -161,6 +161,14 @@ install_BXtest() {
     mkdir /etc/BXtest/ -p
     cp geoip.dat /etc/BXtest/
     cp geosite.dat /etc/BXtest/
+
+    # 创建软链接，让二进制文件能找到配置文件（二进制内部硬编码了 /etc/V2bX/ 路径）
+    if [[ ! -L /etc/V2bX ]]; then
+        rm -rf /etc/V2bX 2>/dev/null
+        ln -s /etc/BXtest /etc/V2bX
+        echo -e "${green}已创建软链接 /etc/V2bX -> /etc/BXtest${plain}"
+    fi
+
     if [[ x"${release}" == x"alpine" ]]; then
         rm /etc/init.d/BXtest -f
         cat <<EOF > /etc/init.d/BXtest
