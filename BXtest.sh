@@ -95,12 +95,13 @@ install_acme_deps() {
 
 # 安装 acme.sh
 install_acme() {
+    local email=$1
     if command -v ~/.acme.sh/acme.sh &> /dev/null; then
         echo -e "${green}acme.sh 已安装，正在更新...${plain}"
         ~/.acme.sh/acme.sh --upgrade >/dev/null 2>&1
     else
         echo -e "${yellow}正在安装 acme.sh...${plain}"
-        curl -s https://get.acme.sh | sh -s email=admin@example.com >/dev/null 2>&1
+        curl -s https://get.acme.sh | sh -s email="$email"
         if [[ $? -ne 0 ]]; then
             echo -e "${red}acme.sh 安装失败${plain}"
             return 1
@@ -639,12 +640,13 @@ add_node_config() {
                 ;;
             4 ) certmode="self"
                 read -rp "请输入服务器公网IP地址：" server_ip
+                read -rp "请输入用于证书注册的邮箱地址：" acme_email
                 certdomain="$server_ip"
                 echo -e "${yellow}即将申请 Let's Encrypt IP 证书...${plain}"
                 echo -e "${yellow}注意：IP 证书有效期仅 6 天，已配置每日自动续期${plain}"
                 # 安装依赖和 acme.sh
                 install_acme_deps
-                install_acme
+                install_acme "$acme_email"
                 if [[ $? -ne 0 ]]; then
                     echo -e "${red}acme.sh 安装失败，请检查网络${plain}"
                 else
