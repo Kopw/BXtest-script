@@ -115,20 +115,49 @@ install_acme() {
     return 0
 }
 
-# 申请 Let's Encrypt IP 证书
+# 检测现有证书
+check_existing_cert() {
+    local ip_addr=$1
+    local cert_path="/etc/BXtest"
+    local bt_cert_path="/www/server/panel/vhost/cert/${ip_addr}"
+    
+    # 检查宝塔面板证书目录
+    if [[ -f "${bt_cert_path}/fullchain.pem" && -f "${bt_cert_path}/privkey.pem" ]]; then
+        echo -e "${green}检测到宝塔面板已有 IP 证书：${bt_cert_path}${plain}"
+        read -rp "是否使用该证书？(y/n，默认y): " use_bt_cert
+        use_bt_cert=${use_bt_cert:-y}
+        if [[ "$use_bt_cert" == "y" || "$use_bt_cert" == "Y" ]]; then
+            # 创建软链接到 BXtest 目录（证书更新后会自动关联）
+            ln -sf "${bt_cert_path}/fullchain.pem" "${cert_path}/fullchain.cer"
+            ln -sf "${bt_cert_path}/privkey.pem" "${cert_path}/cert.key"
+            echo -e "${green}已创建软链接到 ${cert_path}${plain}"
+            return 0
+        fi
+    fi
+    
+    # 检查 BXtest 目录是否已有证书
+    if [[ -f "${cert_path}/fullchain.cer" && -f "${cert_path}/cert.key" ]]; then
+        echo -e "${green}检测到 ${cert_path} 目录已有证书${plain}"
+        read -rp "是否使用现有证书？(y/n，默认y): " use_existing
+        use_existing=${use_existing:-y}
+        if [[ "$use_existing" == "y" || "$use_existing" == "Y" ]]; then
+            echo -e "${green}将使用现有证书${plain}"
+            return 0
+        fi
+    fi
+    
+    # 没有找到现有证书或用户选择不使用
+    return 1
+}
+
+
 issue_ip_cert() {
     local ip_addr=$1
     local cert_path="/etc/BXtest"
     
     echo -e "${yellow}正在为 IP ${ip_addr} 申请 Let's Encrypt 证书...${plain}"
-    echo -e "${yellow}请确保端口 80 已开放且未被占用${plain}"
-    
-    # 临时停止可能占用 80 端口的服务
-    if [[ x"${release}" == x"alpine" ]]; then
-        service BXtest stop >/dev/null 2>&1
-    else
-        systemctl stop BXtest >/dev/null 2>&1
-    fi
+    echo -e "${yellow}注意：证书申请需要使用端口 80，请确保端口 80 未被占用${plain}"
+    echo -e "${yellow}如果端口 80 被占用，请手动停止占用该端口的服务后重试${plain}"
     
     # 使用 standalone 模式申请 IP 证书（短期证书）
     echo -e "${yellow}正在申请证书，请稍候...${plain}"
@@ -665,18 +694,25 @@ add_node_config() {
                 ;;
             4 ) certmode="self"
                 read -rp "请输入服务器公网IP地址：" server_ip
-                read -rp "请输入用于证书注册的邮箱地址：" acme_email
                 certdomain="$server_ip"
-                echo -e "${yellow}即将申请 Let's Encrypt IP 证书...${plain}"
-                echo -e "${yellow}注意：IP 证书有效期仅 6 天，已配置每日自动续期${plain}"
-                # 安装依赖和 acme.sh
-                install_acme_deps
-                install_acme "$acme_email"
-                if [[ $? -ne 0 ]]; then
-                    echo -e "${red}acme.sh 安装失败，请检查网络${plain}"
+                
+                # 先检测是否已有证书
+                check_existing_cert "$server_ip"
+                if [[ $? -eq 0 ]]; then
+                    echo -e "${green}将使用已有证书，跳过申请流程${plain}"
                 else
-                    # 申请证书
-                    issue_ip_cert "$server_ip"
+                    read -rp "请输入用于证书注册的邮箱地址：" acme_email
+                    echo -e "${yellow}即将申请 Let's Encrypt IP 证书...${plain}"
+                    echo -e "${yellow}注意：IP 证书有效期仅 6 天，已配置每日自动续期${plain}"
+                    # 安装依赖和 acme.sh
+                    install_acme_deps
+                    install_acme "$acme_email"
+                    if [[ $? -ne 0 ]]; then
+                        echo -e "${red}acme.sh 安装失败，请检查网络${plain}"
+                    else
+                        # 申请证书
+                        issue_ip_cert "$server_ip"
+                    fi
                 fi
                 ;;
         esac
