@@ -289,6 +289,28 @@ uninstall() {
     fi
     rm /etc/BXtest/ -rf
     rm /usr/local/BXtest/ -rf
+    
+    # 清理软链接
+    if [[ -L /etc/V2bX ]]; then
+        rm /etc/V2bX -f
+        echo -e "${green}已清理软链接 /etc/V2bX${plain}"
+    fi
+    
+    # 询问是否清理 acme.sh 相关内容
+    confirm "是否同时卸载 acme.sh 及其证书？" "n"
+    if [[ $? == 0 ]]; then
+        # 移除 acme.sh 的 cron 任务
+        if crontab -l 2>/dev/null | grep -q "acme.sh"; then
+            crontab -l 2>/dev/null | grep -v "acme.sh" | crontab -
+            echo -e "${green}已清理 acme.sh 续期任务${plain}"
+        fi
+        # 卸载 acme.sh
+        if [[ -f ~/.acme.sh/acme.sh ]]; then
+            ~/.acme.sh/acme.sh --uninstall >/dev/null 2>&1
+            rm -rf ~/.acme.sh
+            echo -e "${green}已卸载 acme.sh${plain}"
+        fi
+    fi
 
     echo ""
     echo -e "卸载成功，如果你想删除此脚本，则退出脚本后运行 ${green}rm /usr/bin/BXtest -f${plain} 进行删除"
