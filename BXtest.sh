@@ -109,6 +109,9 @@ install_acme() {
     fi
     # 设置默认 CA 为 Let's Encrypt
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    # 更新账户邮箱（解决之前用 example.com 注册的问题）
+    echo -e "${yellow}正在更新账户邮箱...${plain}"
+    ~/.acme.sh/acme.sh --update-account --accountemail "$email" >/dev/null 2>&1
     return 0
 }
 
