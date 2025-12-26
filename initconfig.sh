@@ -413,10 +413,10 @@ EOF
     "servers": [
       {
         "tag": "cf",
-        "address": "1.1.1.1"
+        "address": "local"
       }
     ],
-    "strategy": "$dnsstrategy"
+    "strategy": "ipv4_only"
   },
   "outbounds": [
     {
@@ -424,7 +424,7 @@ EOF
       "type": "direct",
       "domain_resolver": {
         "server": "cf",
-        "strategy": "$dnsstrategy"
+        "strategy": "ipv4_only"
       }
     },
     {
