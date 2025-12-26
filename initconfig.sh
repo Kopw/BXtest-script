@@ -93,28 +93,31 @@ issue_ip_cert() {
     fi
     
     # 使用 standalone 模式申请 IP 证书（短期证书）
+    echo -e "${yellow}正在申请证书，请稍候...${plain}"
     ~/.acme.sh/acme.sh --issue --standalone -d "$ip_addr" \
         --server letsencrypt \
         --certificate-profile shortlived \
-        --force >/dev/null 2>&1
+        --force
     
     if [[ $? -ne 0 ]]; then
-        echo -e "${red}证书申请失败，请检查：${plain}"
-        echo -e "${red}1. IP 地址是否正确${plain}"
+        echo -e "${red}证书申请失败，请检查上方日志信息${plain}"
+        echo -e "${red}常见原因：${plain}"
+        echo -e "${red}1. IP 地址是否正确（必须是公网 IP）${plain}"
         echo -e "${red}2. 端口 80 是否对外开放${plain}"
         echo -e "${red}3. 防火墙是否放行${plain}"
+        echo -e "${red}4. Let's Encrypt 服务是否可达${plain}"
         return 1
     fi
     
     # 安装证书到指定目录
+    echo -e "${yellow}正在安装证书...${plain}"
     ~/.acme.sh/acme.sh --install-cert -d "$ip_addr" \
         --key-file "$cert_path/cert.key" \
         --fullchain-file "$cert_path/fullchain.cer" \
-        --reloadcmd "systemctl restart BXtest 2>/dev/null || service BXtest restart 2>/dev/null" \
-        >/dev/null 2>&1
+        --reloadcmd "systemctl restart BXtest 2>/dev/null || service BXtest restart 2>/dev/null"
     
     if [[ $? -ne 0 ]]; then
-        echo -e "${red}证书安装失败${plain}"
+        echo -e "${red}证书安装失败，请检查上方日志信息${plain}"
         return 1
     fi
     
