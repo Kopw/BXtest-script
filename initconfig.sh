@@ -10,6 +10,146 @@ check_ipv6_support() {
     fi
 }
 
+# 检测系统类型
+detect_os() {
+    if [[ -f /etc/redhat-release ]]; then
+        echo "centos"
+    elif cat /etc/issue 2>/dev/null | grep -Eqi "alpine"; then
+        echo "alpine"
+    elif cat /etc/issue 2>/dev/null | grep -Eqi "debian"; then
+        echo "debian"
+    elif cat /etc/issue 2>/dev/null | grep -Eqi "ubuntu"; then
+        echo "ubuntu"
+    elif cat /proc/version 2>/dev/null | grep -Eqi "debian"; then
+        echo "debian"
+    elif cat /proc/version 2>/dev/null | grep -Eqi "ubuntu"; then
+        echo "ubuntu"
+    else
+        echo "unknown"
+    fi
+}
+
+# 安装 acme.sh 依赖
+install_acme_deps() {
+    local os_type=$(detect_os)
+    echo -e "${yellow}正在安装 acme.sh 依赖...${plain}"
+    
+    case "$os_type" in
+        "debian"|"ubuntu")
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y curl socat cron openssl >/dev/null 2>&1
+            systemctl enable cron >/dev/null 2>&1
+            systemctl start cron >/dev/null 2>&1
+            ;;
+        "alpine")
+            apk update >/dev/null 2>&1
+            apk add curl socat openssl dcron >/dev/null 2>&1
+            rc-update add dcron default >/dev/null 2>&1
+            rc-service dcron start >/dev/null 2>&1
+            ;;
+        "centos")
+            yum install -y curl socat cronie openssl >/dev/null 2>&1
+            systemctl enable crond >/dev/null 2>&1
+            systemctl start crond >/dev/null 2>&1
+            ;;
+        *)
+            echo -e "${red}未知系统，请手动安装 curl socat openssl 和 cron${plain}"
+            ;;
+    esac
+}
+
+# 安装 acme.sh
+install_acme() {
+    if command -v ~/.acme.sh/acme.sh &> /dev/null; then
+        echo -e "${green}acme.sh 已安装，正在更新...${plain}"
+        ~/.acme.sh/acme.sh --upgrade >/dev/null 2>&1
+    else
+        echo -e "${yellow}正在安装 acme.sh...${plain}"
+        curl -s https://get.acme.sh | sh -s email=admin@example.com >/dev/null 2>&1
+        if [[ $? -ne 0 ]]; then
+            echo -e "${red}acme.sh 安装失败${plain}"
+            return 1
+        fi
+    fi
+    # 设置默认 CA 为 Let's Encrypt
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+    return 0
+}
+
+# 申请 Let's Encrypt IP 证书
+issue_ip_cert() {
+    local ip_addr=$1
+    local cert_path="/etc/BXtest"
+    
+    echo -e "${yellow}正在为 IP ${ip_addr} 申请 Let's Encrypt 证书...${plain}"
+    echo -e "${yellow}请确保端口 80 已开放且未被占用${plain}"
+    
+    # 临时停止可能占用 80 端口的服务
+    local os_type=$(detect_os)
+    if [[ "$os_type" == "alpine" ]]; then
+        service BXtest stop >/dev/null 2>&1
+    else
+        systemctl stop BXtest >/dev/null 2>&1
+    fi
+    
+    # 使用 standalone 模式申请 IP 证书（短期证书）
+    ~/.acme.sh/acme.sh --issue --standalone -d "$ip_addr" \
+        --server letsencrypt \
+        --certificate-profile shortlived \
+        --force >/dev/null 2>&1
+    
+    if [[ $? -ne 0 ]]; then
+        echo -e "${red}证书申请失败，请检查：${plain}"
+        echo -e "${red}1. IP 地址是否正确${plain}"
+        echo -e "${red}2. 端口 80 是否对外开放${plain}"
+        echo -e "${red}3. 防火墙是否放行${plain}"
+        return 1
+    fi
+    
+    # 安装证书到指定目录
+    ~/.acme.sh/acme.sh --install-cert -d "$ip_addr" \
+        --key-file "$cert_path/cert.key" \
+        --fullchain-file "$cert_path/fullchain.cer" \
+        --reloadcmd "systemctl restart BXtest 2>/dev/null || service BXtest restart 2>/dev/null" \
+        >/dev/null 2>&1
+    
+    if [[ $? -ne 0 ]]; then
+        echo -e "${red}证书安装失败${plain}"
+        return 1
+    fi
+    
+    # 设置每日自动续期（因为 IP 证书只有 6 天有效期）
+    setup_daily_renewal "$ip_addr"
+    
+    echo -e "${green}IP 证书申请成功！${plain}"
+    echo -e "${green}证书路径: ${cert_path}/fullchain.cer${plain}"
+    echo -e "${green}私钥路径: ${cert_path}/cert.key${plain}"
+    return 0
+}
+
+# 设置每日自动续期
+setup_daily_renewal() {
+    local ip_addr=$1
+    local os_type=$(detect_os)
+    local cron_cmd="0 2 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1"
+    
+    # 检查是否已存在续期任务
+    if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
+        echo -e "${yellow}续期任务已存在${plain}"
+        return 0
+    fi
+    
+    # 添加 cron 任务
+    (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
+    
+    if [[ $? -eq 0 ]]; then
+        echo -e "${green}已设置每日凌晨 2 点自动续期${plain}"
+    else
+        echo -e "${red}设置自动续期失败，请手动添加 cron 任务${plain}"
+        echo -e "${yellow}cron 命令: $cron_cmd${plain}"
+    fi
+}
+
 add_node_config() {
     echo -e "${green}请选择节点核心类型：${plain}"
     echo -e "${green}1. xray${plain}"
@@ -90,16 +230,36 @@ add_node_config() {
         echo -e "${green}1. http模式自动申请，节点域名已正确解析${plain}"
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
         echo -e "${green}3. self模式，自签证书或提供已有证书文件${plain}"
+        echo -e "${green}4. IP证书模式，使用acme.sh申请Let's Encrypt IP证书（仅支持公网IP）${plain}"
         read -rp "请输入：" certmode
         case "$certmode" in
-            1 ) certmode="http" ;;
-            2 ) certmode="dns" ;;
-            3 ) certmode="self" ;;
+            1 ) certmode="http" 
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                ;;
+            2 ) certmode="dns"
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                echo -e "${red}请手动修改配置文件后重启BXtest！${plain}"
+                ;;
+            3 ) certmode="self"
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                echo -e "${red}请手动修改配置文件后重启BXtest！${plain}"
+                ;;
+            4 ) certmode="self"
+                read -rp "请输入服务器公网IP地址：" server_ip
+                certdomain="$server_ip"
+                echo -e "${yellow}即将申请 Let's Encrypt IP 证书...${plain}"
+                echo -e "${yellow}注意：IP 证书有效期仅 6 天，已配置每日自动续期${plain}"
+                # 安装依赖和 acme.sh
+                install_acme_deps
+                install_acme
+                if [[ $? -ne 0 ]]; then
+                    echo -e "${red}acme.sh 安装失败，请检查网络${plain}"
+                else
+                    # 申请证书
+                    issue_ip_cert "$server_ip"
+                fi
+                ;;
         esac
-        read -rp "请输入节点证书域名(example.com)：" certdomain
-        if [ "$certmode" != "http" ]; then
-            echo -e "${red}请手动修改配置文件后重启BXtest！${plain}"
-        fi
     fi
     ipv6_support=$(check_ipv6_support)
     listen_ip="0.0.0.0"
