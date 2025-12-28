@@ -669,6 +669,10 @@ EOF
         "outbound": "block"
       },
       {
+        "protocol": "quic",
+        "outbound": "block"
+      },
+      {
         "outbound": "direct",
         "network": [
           "udp","tcp"
