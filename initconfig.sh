@@ -29,6 +29,52 @@ detect_os() {
     fi
 }
 
+# 设置北京时区
+set_beijing_timezone() {
+    local os_type=$(detect_os)
+    echo -e "${yellow}正在设置系统时区为北京时间 (Asia/Shanghai)...${plain}"
+    
+    case "$os_type" in
+        "alpine")
+            # Alpine 使用 apk 安装 tzdata 并设置时区
+            apk add --no-cache tzdata >/dev/null 2>&1
+            cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+            echo "Asia/Shanghai" > /etc/timezone
+            ;;
+        "debian"|"ubuntu")
+            # Debian/Ubuntu 使用 timedatectl 或直接设置
+            if command -v timedatectl &>/dev/null; then
+                timedatectl set-timezone Asia/Shanghai >/dev/null 2>&1
+            else
+                # 备用方案：直接设置
+                ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+                echo "Asia/Shanghai" > /etc/timezone
+            fi
+            ;;
+        "centos")
+            # CentOS 使用 timedatectl
+            if command -v timedatectl &>/dev/null; then
+                timedatectl set-timezone Asia/Shanghai >/dev/null 2>&1
+            else
+                ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+            fi
+            ;;
+        *)
+            # 通用方案
+            if [[ -f /usr/share/zoneinfo/Asia/Shanghai ]]; then
+                ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+                echo "Asia/Shanghai" > /etc/timezone 2>/dev/null
+            else
+                echo -e "${red}无法设置时区，请手动设置为 Asia/Shanghai${plain}"
+                return 1
+            fi
+            ;;
+    esac
+    
+    echo -e "${green}时区已设置为: $(date +%Z) $(date)${plain}"
+    return 0
+}
+
 # 安装 acme.sh 依赖
 install_acme_deps() {
     local os_type=$(detect_os)
@@ -143,10 +189,12 @@ issue_ip_cert() {
     
     # 安装证书到指定目录
     echo -e "${yellow}正在安装证书...${plain}"
+    # 注意：不设置 reloadcmd 以避免自动重启 BXtest
+    # 证书更新后仅更新文件，BXtest 会在下次启动时自动加载新证书
     ~/.acme.sh/acme.sh --install-cert -d "$ip_addr" \
         --key-file "$cert_path/cert.key" \
         --fullchain-file "$cert_path/fullchain.cer" \
-        --reloadcmd "systemctl restart BXtest 2>/dev/null || service BXtest restart 2>/dev/null"
+        --reloadcmd "true"
     
     if [[ $? -ne 0 ]]; then
         echo -e "${red}证书安装失败，请检查上方日志信息${plain}"
@@ -166,19 +214,23 @@ issue_ip_cert() {
 setup_daily_renewal() {
     local ip_addr=$1
     local os_type=$(detect_os)
-    local cron_cmd="0 2 * * * ~/.acme.sh/acme.sh --cron --home ~/.acme.sh >/dev/null 2>&1"
+    # 每天早上 6:30 执行续期，使用 --force 强制更新
+    local cron_cmd="30 6 * * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --force >/dev/null 2>&1"
     
-    # 检查是否已存在续期任务
+    # 先设置北京时区，确保 cron 按北京时间执行
+    set_beijing_timezone
+    
+    # 检查是否已存在续期任务，如果存在则先删除旧的
     if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
-        echo -e "${yellow}续期任务已存在${plain}"
-        return 0
+        echo -e "${yellow}检测到旧的续期任务，正在更新...${plain}"
+        crontab -l 2>/dev/null | grep -v "acme.sh --cron" | crontab -
     fi
     
-    # 添加 cron 任务
+    # 添加新的 cron 任务
     (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
     
     if [[ $? -eq 0 ]]; then
-        echo -e "${green}已设置每日凌晨 2 点自动续期${plain}"
+        echo -e "${green}已设置每日早上 6:30（北京时间）自动续期${plain}"
     else
         echo -e "${red}设置自动续期失败，请手动添加 cron 任务${plain}"
         echo -e "${yellow}cron 命令: $cron_cmd${plain}"
