@@ -131,8 +131,9 @@ check_existing_cert() {
     local ip_addr=$1
     local cert_path="/etc/BXtest"
     local bt_cert_path="/www/server/panel/vhost/cert/${ip_addr}"
+    local bt_panel_ssl="/www/server/panel/ssl"
     
-    # 检查宝塔面板证书目录
+    # 检查宝塔面板网站证书目录
     if [[ -f "${bt_cert_path}/fullchain.pem" && -f "${bt_cert_path}/privkey.pem" ]]; then
         echo -e "${green}检测到宝塔面板已有 IP 证书：${bt_cert_path}${plain}"
         read -rp "是否使用该证书？(y/n，默认y): " use_bt_cert
@@ -143,6 +144,24 @@ check_existing_cert() {
             ln -sf "${bt_cert_path}/privkey.pem" "${cert_path}/cert.key"
             echo -e "${green}已创建软链接到 ${cert_path}${plain}"
             return 0
+        fi
+    fi
+    
+    # 检查宝塔面板自用 SSL 证书
+    if [[ -f "${bt_panel_ssl}/certificate.pem" && -f "${bt_panel_ssl}/privateKey.pem" ]]; then
+        # 检查证书是否包含该 IP
+        local cert_info=$(openssl x509 -in "${bt_panel_ssl}/certificate.pem" -text -noout 2>/dev/null)
+        if echo "$cert_info" | grep -q "IP Address:${ip_addr}"; then
+            echo -e "${green}检测到宝塔面板自用 SSL 证书包含 IP：${ip_addr}${plain}"
+            read -rp "是否使用该证书？(y/n，默认y): " use_panel_cert
+            use_panel_cert=${use_panel_cert:-y}
+            if [[ "$use_panel_cert" == "y" || "$use_panel_cert" == "Y" ]]; then
+                # 创建软链接到 BXtest 目录
+                ln -sf "${bt_panel_ssl}/certificate.pem" "${cert_path}/fullchain.cer"
+                ln -sf "${bt_panel_ssl}/privateKey.pem" "${cert_path}/cert.key"
+                echo -e "${green}已创建软链接到 ${cert_path}${plain}"
+                return 0
+            fi
         fi
     fi
     
