@@ -385,9 +385,9 @@ add_node_config() {
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
             "ListenIP": "0.0.0.0",
@@ -417,9 +417,9 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
             "ListenIP": "$listen_ip",
@@ -447,9 +447,9 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Hysteria2ConfigPath": "/etc/BXtest/hy2config.yaml",
             "Timeout": 30,

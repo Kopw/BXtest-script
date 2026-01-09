@@ -392,12 +392,6 @@ uninstall() {
     rm /etc/BXtest/ -rf
     rm /usr/local/BXtest/ -rf
     
-    # 清理软链接
-    if [[ -L /etc/V2bX ]]; then
-        rm /etc/V2bX -f
-        echo -e "${green}已清理软链接 /etc/V2bX${plain}"
-    fi
-    
     # 询问是否清理 acme.sh 相关内容
     confirm "是否同时卸载 acme.sh 及其证书？" "n"
     if [[ $? == 0 ]]; then
@@ -797,9 +791,9 @@ add_node_config() {
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
             "ListenIP": "0.0.0.0",
@@ -829,9 +823,9 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Timeout": 30,
             "ListenIP": "$listen_ip",
@@ -859,9 +853,9 @@ EOF
     node_config=$(cat <<EOF
 {
             "Core": "$core",
-            "ApiHost": "$ApiHost",
-            "ApiKey": "$ApiKey",
-            "NodeID": $NodeID,
+            "Host": "$ApiHost",
+            "Key": "$ApiKey",
+            "ID": $NodeID,
             "NodeType": "$NodeType",
             "Hysteria2ConfigPath": "/etc/BXtest/hy2config.yaml",
             "Timeout": 30,
