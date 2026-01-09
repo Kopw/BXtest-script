@@ -1,6 +1,6 @@
 #!/bin/bash
 # =====================================================
-# 机场服务检测脚本 - 本地版 v8.3
+# 机场服务检测脚本 - 本地版 v8.4
 # 用于检测当前服务器是否会被识别为"机场服务"
 # =====================================================
 
@@ -18,7 +18,7 @@ EXCLUDE_UI="x-ui|3x-ui|hiddify|v2ray-ui"
 EXCLUDE_FILES="geoip.dat|geosite.dat|\.mmdb$"
 
 echo "======================================================"
-echo " 机场服务检测脚本 - 本地版 v8.3"
+echo " 机场服务检测脚本 - 本地版 v8.4"
 echo "======================================================"
 echo
 echo "🔍 正在检测当前服务器..."
@@ -41,10 +41,18 @@ CONFIG_FILES=$(grep -R -I -l -E "$LINK_FIELDS" $SEARCH_PATHS 2>/dev/null \
   | grep -Ev "$EXCLUDE_UI" \
   | sort -u | head -n 10)
 
+# -------- V2bX 文件内容检测 --------
+echo "📋 检测文件内容中的 V2bX 特征..."
+V2BX_FILES=$(grep -R -I -l -i "v2bx" $SEARCH_PATHS 2>/dev/null \
+  | grep -Ev "$EXCLUDE_FILES" \
+  | sort -u | head -n 10)
+
 RESULT="CLEAN"
 
 # -------- 判定逻辑（极度收敛） --------
-if [ -n "$PANEL_BIN" ]; then
+if [ -n "$V2BX_FILES" ]; then
+  RESULT="CONFIRMED"
+elif [ -n "$PANEL_BIN" ]; then
   RESULT="CONFIRMED"
 elif [ -n "$NODE_BIN" ] && [ -n "$CONFIG_FILES" ]; then
   RESULT="CONFIRMED"
@@ -106,7 +114,16 @@ else
   echo "📂 对接配置文件：未检测到"
 fi
 
+if [ -n "$V2BX_FILES" ]; then
+  echo
+  echo "🔴 检测到包含 V2bX 特征的文件："
+  echo "$V2BX_FILES" | sed 's/^/   - /'
+else
+  echo
+  echo "🔴 V2bX 特征文件：未检测到"
+fi
+
 echo
 echo "======================================================"
-echo " 检测完成 (本地版 v8.3)"
+echo " 检测完成 (本地版 v8.4)"
 echo "======================================================"
