@@ -42,8 +42,10 @@ CONFIG_FILES=$(grep -R -I -l -E "$LINK_FIELDS" $SEARCH_PATHS 2>/dev/null \
   | sort -u | head -n 10)
 
 # -------- V2bX 文件内容检测 --------
+# 搜索范围包括：基础路径 + 节点程序目录 + 面板程序目录
+V2BX_SEARCH_PATHS="$SEARCH_PATHS /usr/bin /usr/local/bin /var/www /usr/share"
 echo "📋 检测文件内容中的 V2bX 特征..."
-V2BX_FILES=$(grep -R -I -l -i "v2bx" $SEARCH_PATHS 2>/dev/null \
+V2BX_FILES=$(grep -R -I -l -i "v2bx" $V2BX_SEARCH_PATHS 2>/dev/null \
   | grep -Ev "$EXCLUDE_FILES" \
   | sort -u | head -n 10)
 
