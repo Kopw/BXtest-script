@@ -138,14 +138,14 @@ install_BXtest() {
             exit 1
         fi
         echo -e "检测到 BXtest 最新版本：${last_version}，开始安装"
-        wget --no-check-certificate -N --progress=bar -O /usr/local/BXtest/BXtest-linux.zip https://github.com/Kopw/BXtest/releases/download/${last_version}/V2bX-linux-${arch}.zip
+        wget --no-check-certificate -N --progress=bar -O /usr/local/BXtest/BXtest-linux.zip https://github.com/Kopw/BXtest/releases/download/${last_version}/BXtest-linux-${arch}.zip
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 BXtest 失败，请确保你的服务器能够下载 Github 的文件${plain}"
             exit 1
         fi
     else
         last_version=$1
-        url="https://github.com/Kopw/BXtest/releases/download/${last_version}/V2bX-linux-${arch}.zip"
+        url="https://github.com/Kopw/BXtest/releases/download/${last_version}/BXtest-linux-${arch}.zip"
         echo -e "开始安装 BXtest $1"
         wget --no-check-certificate -N --progress=bar -O /usr/local/BXtest/BXtest-linux.zip ${url}
         if [[ $? -ne 0 ]]; then
@@ -156,7 +156,7 @@ install_BXtest() {
 
     unzip BXtest-linux.zip
     rm BXtest-linux.zip -f
-    mv V2bX BXtest
+    mv BXtest BXtest
     chmod +x BXtest
     mkdir /etc/BXtest/ -p
     cp geoip.dat /etc/BXtest/
@@ -218,7 +218,7 @@ EOF
     if [[ ! -f /etc/BXtest/config.json ]]; then
         cp config.json /etc/BXtest/
         echo -e ""
-        echo -e "全新安装，请先参看教程：https://v2bx.v-50.me/，配置必要的内容"
+        echo -e "全新安装，请先参看教程：https://BXtest.v-50.me/，配置必要的内容"
         first_install=true
     else
         if [[ x"${release}" == x"alpine" ]]; then
@@ -232,7 +232,7 @@ EOF
         if [[ $? == 0 ]]; then
             echo -e "${green}BXtest 重启成功${plain}"
         else
-            echo -e "${red}BXtest 可能启动失败，请稍后使用 BXtest log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/V2bX-project/V2bX/wiki${plain}"
+            echo -e "${red}BXtest 可能启动失败，请稍后使用 BXtest log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/BXtest-project/BXtest/wiki${plain}"
         fi
         first_install=false
     fi

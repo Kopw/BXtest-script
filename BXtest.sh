@@ -810,7 +810,7 @@ add_node_config() {
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "v2bx@github.com",
+                "Email": "BXtest@github.com",
                 "Provider": "cloudflare",
                 "DNSEnv": {
                     "EnvName": "env1"
@@ -840,7 +840,7 @@ EOF
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "v2bx@github.com",
+                "Email": "BXtest@github.com",
                 "Provider": "cloudflare",
                 "DNSEnv": {
                     "EnvName": "env1"
@@ -869,7 +869,7 @@ EOF
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "v2bx@github.com",
+                "Email": "BXtest@github.com",
                 "Provider": "cloudflare",
                 "DNSEnv": {
                     "EnvName": "env1"
