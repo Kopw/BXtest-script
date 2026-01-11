@@ -750,7 +750,16 @@ add_node_config() {
                 ;;
             2 ) certmode="dns"
                 read -rp "请输入节点证书域名(example.com)：" certdomain
-                echo -e "${red}请手动修改配置文件后重启BXtest！${plain}"
+                read -rp "请输入用于证书注册的邮箱地址：" cert_email
+                echo -e "${yellow}请输入 Cloudflare API Token（需要 Zone:DNS:Edit 权限）${plain}"
+                echo -e "${yellow}获取方式：Cloudflare Dashboard -> My Profile -> API Tokens -> Create Token${plain}"
+                read -rp "请输入 CF_DNS_API_TOKEN：" cf_dns_api_token
+                if [[ -z "$cf_dns_api_token" ]]; then
+                    echo -e "${red}API Token 不能为空，将使用默认占位符，请手动修改配置文件！${plain}"
+                    cf_dns_api_token="your_cloudflare_api_token_here"
+                else
+                    echo -e "${green}Cloudflare API Token 已设置${plain}"
+                fi
                 ;;
             3 ) certmode="self"
                 read -rp "请输入节点证书域名(example.com)：" certdomain
@@ -810,10 +819,10 @@ add_node_config() {
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "BXtest@github.com",
+                "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
-                    "EnvName": "env1"
+                    "CF_DNS_API_TOKEN": "${cf_dns_api_token:-}"
                 }
             }
         },
@@ -840,10 +849,10 @@ EOF
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "BXtest@github.com",
+                "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
-                    "EnvName": "env1"
+                    "CF_DNS_API_TOKEN": "${cf_dns_api_token:-}"
                 }
             }
         },
@@ -869,10 +878,10 @@ EOF
                 "CertDomain": "$certdomain",
                 "CertFile": "/etc/BXtest/fullchain.cer",
                 "KeyFile": "/etc/BXtest/cert.key",
-                "Email": "BXtest@github.com",
+                "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
-                    "EnvName": "env1"
+                    "CF_DNS_API_TOKEN": "${cf_dns_api_token:-}"
                 }
             }
         },
