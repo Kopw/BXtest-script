@@ -289,6 +289,174 @@ setup_daily_renewal() {
     fi
 }
 
+# 从直链下载证书和密钥
+download_cert_from_url() {
+    local cert_url=$1
+    local key_url=$2
+    local cert_path="/etc/BXtest"
+    
+    echo -e "${yellow}正在从直链下载证书...${plain}"
+    
+    # 确保目录存在
+    mkdir -p "$cert_path"
+    
+    # 下载证书
+    if curl -sL -o "${cert_path}/fullchain.cer" "$cert_url"; then
+        echo -e "${green}证书下载成功: ${cert_path}/fullchain.cer${plain}"
+    else
+        echo -e "${red}证书下载失败，请检查 URL 是否正确${plain}"
+        return 1
+    fi
+    
+    # 下载密钥
+    if curl -sL -o "${cert_path}/cert.key" "$key_url"; then
+        echo -e "${green}密钥下载成功: ${cert_path}/cert.key${plain}"
+    else
+        echo -e "${red}密钥下载失败，请检查 URL 是否正确${plain}"
+        return 1
+    fi
+    
+    # 设置正确的权限
+    chmod 600 "${cert_path}/cert.key"
+    chmod 644 "${cert_path}/fullchain.cer"
+    
+    echo -e "${green}证书和密钥下载完成！${plain}"
+    return 0
+}
+
+# 设置每日自动下载证书
+setup_daily_cert_download() {
+    local cert_url=$1
+    local key_url=$2
+    local cert_path="/etc/BXtest"
+    
+    # 创建下载脚本
+    local download_script="/etc/BXtest/update_cert.sh"
+    cat > "$download_script" << 'SCRIPT_EOF'
+#!/bin/bash
+# BXtest 证书自动更新脚本
+CERT_URL="__CERT_URL__"
+KEY_URL="__KEY_URL__"
+CERT_PATH="/etc/BXtest"
+LOG_FILE="/var/log/bxtest_cert_update.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+log "开始更新证书..."
+
+# 下载新证书到临时文件
+TEMP_CERT=$(mktemp)
+TEMP_KEY=$(mktemp)
+
+if curl -sL -o "$TEMP_CERT" "$CERT_URL"; then
+    log "证书下载成功"
+else
+    log "证书下载失败"
+    rm -f "$TEMP_CERT" "$TEMP_KEY"
+    exit 1
+fi
+
+if curl -sL -o "$TEMP_KEY" "$KEY_URL"; then
+    log "密钥下载成功"
+else
+    log "密钥下载失败"
+    rm -f "$TEMP_CERT" "$TEMP_KEY"
+    exit 1
+fi
+
+# 验证证书是否有效
+if openssl x509 -in "$TEMP_CERT" -noout 2>/dev/null; then
+    log "证书验证通过"
+else
+    log "证书验证失败，文件可能不是有效的证书"
+    rm -f "$TEMP_CERT" "$TEMP_KEY"
+    exit 1
+fi
+
+# 验证密钥是否有效
+if openssl rsa -in "$TEMP_KEY" -check -noout 2>/dev/null || openssl ec -in "$TEMP_KEY" -check -noout 2>/dev/null; then
+    log "密钥验证通过"
+else
+    log "密钥验证失败，文件可能不是有效的密钥"
+    rm -f "$TEMP_CERT" "$TEMP_KEY"
+    exit 1
+fi
+
+# 比较新旧证书是否相同
+if [ -f "${CERT_PATH}/fullchain.cer" ]; then
+    OLD_HASH=$(openssl x509 -in "${CERT_PATH}/fullchain.cer" -noout -modulus 2>/dev/null | md5sum)
+    NEW_HASH=$(openssl x509 -in "$TEMP_CERT" -noout -modulus 2>/dev/null | md5sum)
+    if [ "$OLD_HASH" = "$NEW_HASH" ]; then
+        log "证书未变化，无需更新"
+        rm -f "$TEMP_CERT" "$TEMP_KEY"
+        exit 0
+    fi
+fi
+
+# 备份旧证书
+if [ -f "${CERT_PATH}/fullchain.cer" ]; then
+    cp "${CERT_PATH}/fullchain.cer" "${CERT_PATH}/fullchain.cer.bak"
+fi
+if [ -f "${CERT_PATH}/cert.key" ]; then
+    cp "${CERT_PATH}/cert.key" "${CERT_PATH}/cert.key.bak"
+fi
+
+# 替换证书文件
+mv "$TEMP_CERT" "${CERT_PATH}/fullchain.cer"
+mv "$TEMP_KEY" "${CERT_PATH}/cert.key"
+
+# 设置权限
+chmod 644 "${CERT_PATH}/fullchain.cer"
+chmod 600 "${CERT_PATH}/cert.key"
+
+log "证书更新完成"
+
+# 重启 BXtest 服务以加载新证书
+if command -v bxtest &>/dev/null; then
+    bxtest restart >/dev/null 2>&1
+    log "BXtest 服务已重启"
+elif systemctl is-active --quiet BXtest; then
+    systemctl restart BXtest >/dev/null 2>&1
+    log "BXtest 服务已重启"
+fi
+
+log "证书自动更新流程完成"
+SCRIPT_EOF
+
+    # 替换脚本中的 URL 占位符
+    sed -i "s|__CERT_URL__|${cert_url}|g" "$download_script"
+    sed -i "s|__KEY_URL__|${key_url}|g" "$download_script"
+    
+    # 设置脚本可执行权限
+    chmod +x "$download_script"
+    
+    # 先设置北京时区
+    set_beijing_timezone
+    
+    # 每天凌晨 3:00 执行下载更新
+    local cron_cmd="0 3 * * * $download_script >/dev/null 2>&1"
+    
+    # 检查是否已存在证书下载任务
+    if crontab -l 2>/dev/null | grep -q "update_cert.sh"; then
+        echo -e "${yellow}检测到旧的证书下载任务，正在更新...${plain}"
+        crontab -l 2>/dev/null | grep -v "update_cert.sh" | crontab -
+    fi
+    
+    # 添加新的 cron 任务
+    (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
+    
+    if [[ $? -eq 0 ]]; then
+        echo -e "${green}已设置每日凌晨 3:00（北京时间）自动下载更新证书${plain}"
+        echo -e "${green}更新脚本: $download_script${plain}"
+        echo -e "${green}更新日志: /var/log/bxtest_cert_update.log${plain}"
+    else
+        echo -e "${red}设置自动下载失败，请手动添加 cron 任务${plain}"
+        echo -e "${yellow}cron 命令: $cron_cmd${plain}"
+    fi
+}
+
 confirm() {
     if [[ $# > 1 ]]; then
         echo && read -rp "$1 [默认$2]: " temp
@@ -744,6 +912,7 @@ add_node_config() {
         echo -e "${green}3. self模式，自签证书或提供已有证书文件${plain}"
         echo -e "${green}4. IP证书模式，使用acme.sh申请Let's Encrypt IP证书（仅支持公网IP）${plain}"
         echo -e "${green}5. tls模式自动申请，使用HTTPS 443端口验证（需确保443端口未被占用）${plain}"
+        echo -e "${green}6. 直链下载模式，从URL直接下载证书和密钥（每日自动更新）${plain}"
         read -rp "请输入：" certmode
         case "$certmode" in
             1 ) certmode="http" 
@@ -795,6 +964,27 @@ add_node_config() {
                 echo -e "${yellow}1. 域名已正确解析到本服务器${plain}"
                 echo -e "${yellow}2. 需CF转发443->33211（Let's Encrypt访问443端口）${plain}"
                 echo -e "${yellow}3. 防火墙已放行33211端口${plain}"
+                ;;
+            6 ) certmode="self"
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                echo -e "${yellow}请输入证书直链URL（fullchain.cer）：${plain}"
+                read -rp "证书URL：" cert_download_url
+                echo -e "${yellow}请输入密钥直链URL（cert.key）：${plain}"
+                read -rp "密钥URL：" key_download_url
+                
+                if [[ -z "$cert_download_url" || -z "$key_download_url" ]]; then
+                    echo -e "${red}证书或密钥 URL 不能为空！${plain}"
+                else
+                    # 下载证书
+                    download_cert_from_url "$cert_download_url" "$key_download_url"
+                    if [[ $? -eq 0 ]]; then
+                        # 设置每日自动更新
+                        setup_daily_cert_download "$cert_download_url" "$key_download_url"
+                        echo -e "${green}证书配置完成！每日将自动从直链获取最新证书${plain}"
+                    else
+                        echo -e "${red}证书下载失败，请检查 URL 后重试${plain}"
+                    fi
+                fi
                 ;;
         esac
     fi

@@ -506,8 +506,8 @@ add_node_config() {
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
         echo -e "${green}3. self模式，自签证书或提供已有证书文件${plain}"
         echo -e "${green}4. IP证书模式，使用acme.sh申请Let's Encrypt IP证书（仅支持公网IP）${plain}"
-        echo -e "${green}5. 直链下载模式，从URL直接下载证书和密钥（每日自动更新）${plain}"
-        echo -e "${green}6. tls模式自动申请，使用HTTPS 443端口验证（需确保443端口未被占用）${plain}"
+        echo -e "${green}5. tls模式自动申请，使用HTTPS 443端口验证（需确保443端口未被占用）${plain}"
+        echo -e "${green}6. 直链下载模式，从URL直接下载证书和密钥（每日自动更新）${plain}"
         read -rp "请输入：" certmode
         case "$certmode" in
             1 ) certmode="http" 
@@ -529,27 +529,6 @@ add_node_config() {
             3 ) certmode="self"
                 read -rp "请输入节点证书域名(example.com)：" certdomain
                 echo -e "${red}请手动修改配置文件后重启BXtest！${plain}"
-                ;;
-            5 ) certmode="self"
-                read -rp "请输入节点证书域名(example.com)：" certdomain
-                echo -e "${yellow}请输入证书直链URL（fullchain.cer）：${plain}"
-                read -rp "证书URL：" cert_download_url
-                echo -e "${yellow}请输入密钥直链URL（cert.key）：${plain}"
-                read -rp "密钥URL：" key_download_url
-                
-                if [[ -z "$cert_download_url" || -z "$key_download_url" ]]; then
-                    echo -e "${red}证书或密钥 URL 不能为空！${plain}"
-                else
-                    # 下载证书
-                    download_cert_from_url "$cert_download_url" "$key_download_url"
-                    if [[ $? -eq 0 ]]; then
-                        # 设置每日自动更新
-                        setup_daily_cert_download "$cert_download_url" "$key_download_url"
-                        echo -e "${green}证书配置完成！每日将自动从直链获取最新证书${plain}"
-                    else
-                        echo -e "${red}证书下载失败，请检查 URL 后重试${plain}"
-                    fi
-                fi
                 ;;
             4 ) certmode="self"
                 read -rp "请输入服务器公网IP地址：" server_ip
@@ -580,6 +559,27 @@ add_node_config() {
                 echo -e "${yellow}1. 域名已正确解析到本服务器${plain}"
                 echo -e "${yellow}2. 需CF转发443->33211（Let's Encrypt访问443端口）${plain}"
                 echo -e "${yellow}3. 防火墙已放行33211端口${plain}"
+                ;;
+            6 ) certmode="self"
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                echo -e "${yellow}请输入证书直链URL（fullchain.cer）：${plain}"
+                read -rp "证书URL：" cert_download_url
+                echo -e "${yellow}请输入密钥直链URL（cert.key）：${plain}"
+                read -rp "密钥URL：" key_download_url
+                
+                if [[ -z "$cert_download_url" || -z "$key_download_url" ]]; then
+                    echo -e "${red}证书或密钥 URL 不能为空！${plain}"
+                else
+                    # 下载证书
+                    download_cert_from_url "$cert_download_url" "$key_download_url"
+                    if [[ $? -eq 0 ]]; then
+                        # 设置每日自动更新
+                        setup_daily_cert_download "$cert_download_url" "$key_download_url"
+                        echo -e "${green}证书配置完成！每日将自动从直链获取最新证书${plain}"
+                    else
+                        echo -e "${red}证书下载失败，请检查 URL 后重试${plain}"
+                    fi
+                fi
                 ;;
         esac
     fi
