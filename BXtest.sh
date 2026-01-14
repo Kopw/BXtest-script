@@ -743,6 +743,7 @@ add_node_config() {
         echo -e "${green}2. dns模式自动申请，需填入正确域名服务商API参数${plain}"
         echo -e "${green}3. self模式，自签证书或提供已有证书文件${plain}"
         echo -e "${green}4. IP证书模式，使用acme.sh申请Let's Encrypt IP证书（仅支持公网IP）${plain}"
+        echo -e "${green}5. tls模式自动申请，使用HTTPS 443端口验证（需确保443端口未被占用）${plain}"
         read -rp "请输入：" certmode
         case "$certmode" in
             1 ) certmode="http" 
@@ -787,6 +788,13 @@ add_node_config() {
                         issue_ip_cert "$server_ip"
                     fi
                 fi
+                ;;
+            5 ) certmode="tls"
+                read -rp "请输入节点证书域名(example.com)：" certdomain
+                echo -e "${yellow}TLS模式将使用33211端口进行验证，请确保：${plain}"
+                echo -e "${yellow}1. 域名已正确解析到本服务器${plain}"
+                echo -e "${yellow}2. 需CF转发443->33211（Let's Encrypt访问443端口）${plain}"
+                echo -e "${yellow}3. 防火墙已放行33211端口${plain}"
                 ;;
         esac
     fi
