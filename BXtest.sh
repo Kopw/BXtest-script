@@ -346,83 +346,30 @@ log() {
 
 log "开始更新证书..."
 
-# 下载新证书到临时文件
-TEMP_CERT=$(mktemp)
-TEMP_KEY=$(mktemp)
+# 确保目录存在
+mkdir -p "$CERT_PATH"
 
-if curl -sL -o "$TEMP_CERT" "$CERT_URL"; then
-    log "证书下载成功"
+# 直接下载证书覆盖旧文件
+if curl -sL -o "${CERT_PATH}/fullchain.cer" "$CERT_URL"; then
+    log "证书下载成功: ${CERT_PATH}/fullchain.cer"
 else
     log "证书下载失败"
-    rm -f "$TEMP_CERT" "$TEMP_KEY"
     exit 1
 fi
 
-if curl -sL -o "$TEMP_KEY" "$KEY_URL"; then
-    log "密钥下载成功"
+# 直接下载密钥覆盖旧文件
+if curl -sL -o "${CERT_PATH}/cert.key" "$KEY_URL"; then
+    log "密钥下载成功: ${CERT_PATH}/cert.key"
 else
     log "密钥下载失败"
-    rm -f "$TEMP_CERT" "$TEMP_KEY"
     exit 1
 fi
-
-# 验证证书是否有效
-if openssl x509 -in "$TEMP_CERT" -noout 2>/dev/null; then
-    log "证书验证通过"
-else
-    log "证书验证失败，文件可能不是有效的证书"
-    rm -f "$TEMP_CERT" "$TEMP_KEY"
-    exit 1
-fi
-
-# 验证密钥是否有效
-if openssl rsa -in "$TEMP_KEY" -check -noout 2>/dev/null || openssl ec -in "$TEMP_KEY" -check -noout 2>/dev/null; then
-    log "密钥验证通过"
-else
-    log "密钥验证失败，文件可能不是有效的密钥"
-    rm -f "$TEMP_CERT" "$TEMP_KEY"
-    exit 1
-fi
-
-# 比较新旧证书是否相同
-if [ -f "${CERT_PATH}/fullchain.cer" ]; then
-    OLD_HASH=$(openssl x509 -in "${CERT_PATH}/fullchain.cer" -noout -modulus 2>/dev/null | md5sum)
-    NEW_HASH=$(openssl x509 -in "$TEMP_CERT" -noout -modulus 2>/dev/null | md5sum)
-    if [ "$OLD_HASH" = "$NEW_HASH" ]; then
-        log "证书未变化，无需更新"
-        rm -f "$TEMP_CERT" "$TEMP_KEY"
-        exit 0
-    fi
-fi
-
-# 备份旧证书
-if [ -f "${CERT_PATH}/fullchain.cer" ]; then
-    cp "${CERT_PATH}/fullchain.cer" "${CERT_PATH}/fullchain.cer.bak"
-fi
-if [ -f "${CERT_PATH}/cert.key" ]; then
-    cp "${CERT_PATH}/cert.key" "${CERT_PATH}/cert.key.bak"
-fi
-
-# 替换证书文件
-mv "$TEMP_CERT" "${CERT_PATH}/fullchain.cer"
-mv "$TEMP_KEY" "${CERT_PATH}/cert.key"
 
 # 设置权限
 chmod 644 "${CERT_PATH}/fullchain.cer"
 chmod 600 "${CERT_PATH}/cert.key"
 
 log "证书更新完成"
-
-# 重启 BXtest 服务以加载新证书
-if command -v bxtest &>/dev/null; then
-    bxtest restart >/dev/null 2>&1
-    log "BXtest 服务已重启"
-elif systemctl is-active --quiet BXtest; then
-    systemctl restart BXtest >/dev/null 2>&1
-    log "BXtest 服务已重启"
-fi
-
-log "证书自动更新流程完成"
 SCRIPT_EOF
 
     # 替换脚本中的 URL 占位符
