@@ -260,7 +260,10 @@ setup_daily_renewal() {
 download_cert_from_url() {
     local cert_url=$1
     local key_url=$2
+    local cert_remark=$3
     local cert_path="/etc/BXtest"
+    local cert_file="${cert_remark}_fullchain.cer"
+    local key_file="${cert_remark}_cert.key"
     
     echo -e "${yellow}正在从直链下载证书...${plain}"
     
@@ -268,24 +271,24 @@ download_cert_from_url() {
     mkdir -p "$cert_path"
     
     # 下载证书
-    if curl -sL -o "${cert_path}/fullchain.cer" "$cert_url"; then
-        echo -e "${green}证书下载成功: ${cert_path}/fullchain.cer${plain}"
+    if curl -sL -o "${cert_path}/${cert_file}" "$cert_url"; then
+        echo -e "${green}证书下载成功: ${cert_path}/${cert_file}${plain}"
     else
         echo -e "${red}证书下载失败，请检查 URL 是否正确${plain}"
         return 1
     fi
     
     # 下载密钥
-    if curl -sL -o "${cert_path}/cert.key" "$key_url"; then
-        echo -e "${green}密钥下载成功: ${cert_path}/cert.key${plain}"
+    if curl -sL -o "${cert_path}/${key_file}" "$key_url"; then
+        echo -e "${green}密钥下载成功: ${cert_path}/${key_file}${plain}"
     else
         echo -e "${red}密钥下载失败，请检查 URL 是否正确${plain}"
         return 1
     fi
     
     # 设置正确的权限
-    chmod 600 "${cert_path}/cert.key"
-    chmod 644 "${cert_path}/fullchain.cer"
+    chmod 600 "${cert_path}/${key_file}"
+    chmod 644 "${cert_path}/${cert_file}"
     
     echo -e "${green}证书和密钥下载完成！${plain}"
     return 0
@@ -295,6 +298,7 @@ download_cert_from_url() {
 setup_daily_cert_download() {
     local cert_url=$1
     local key_url=$2
+    local cert_remark=$3
     local cert_path="/etc/BXtest"
     local os_type=$(detect_os)
     
@@ -305,7 +309,10 @@ setup_daily_cert_download() {
 # BXtest 证书自动更新脚本
 CERT_URL="__CERT_URL__"
 KEY_URL="__KEY_URL__"
+CERT_REMARK="__CERT_REMARK__"
 CERT_PATH="/etc/BXtest"
+CERT_FILE="${CERT_REMARK}_fullchain.cer"
+KEY_FILE="${CERT_REMARK}_cert.key"
 LOG_FILE="/var/log/bxtest_cert_update.log"
 
 log() {
@@ -318,31 +325,32 @@ log "开始更新证书..."
 mkdir -p "$CERT_PATH"
 
 # 直接下载证书覆盖旧文件
-if curl -sL -o "${CERT_PATH}/fullchain.cer" "$CERT_URL"; then
-    log "证书下载成功: ${CERT_PATH}/fullchain.cer"
+if curl -sL -o "${CERT_PATH}/${CERT_FILE}" "$CERT_URL"; then
+    log "证书下载成功: ${CERT_PATH}/${CERT_FILE}"
 else
     log "证书下载失败"
     exit 1
 fi
 
 # 直接下载密钥覆盖旧文件
-if curl -sL -o "${CERT_PATH}/cert.key" "$KEY_URL"; then
-    log "密钥下载成功: ${CERT_PATH}/cert.key"
+if curl -sL -o "${CERT_PATH}/${KEY_FILE}" "$KEY_URL"; then
+    log "密钥下载成功: ${CERT_PATH}/${KEY_FILE}"
 else
     log "密钥下载失败"
     exit 1
 fi
 
 # 设置权限
-chmod 644 "${CERT_PATH}/fullchain.cer"
-chmod 600 "${CERT_PATH}/cert.key"
+chmod 644 "${CERT_PATH}/${CERT_FILE}"
+chmod 600 "${CERT_PATH}/${KEY_FILE}"
 
 log "证书更新完成"
 SCRIPT_EOF
 
-    # 替换脚本中的 URL 占位符
+    # 替换脚本中的占位符
     sed -i "s|__CERT_URL__|${cert_url}|g" "$download_script"
     sed -i "s|__KEY_URL__|${key_url}|g" "$download_script"
+    sed -i "s|__CERT_REMARK__|${cert_remark}|g" "$download_script"
     
     # 设置脚本可执行权限
     chmod +x "$download_script"
@@ -509,19 +517,22 @@ add_node_config() {
                 ;;
             6 ) certmode="self"
                 read -rp "请输入节点证书域名(example.com)：" certdomain
-                echo -e "${yellow}请输入证书直链URL（fullchain.cer）：${plain}"
+                local cert_remark="${certdomain:-nodomain}"
+                cert_file_name="${cert_remark}_fullchain.cer"
+                key_file_name="${cert_remark}_cert.key"
+                echo -e "${yellow}请输入证书直链URL（${cert_file_name}）：${plain}"
                 read -rp "证书URL：" cert_download_url
-                echo -e "${yellow}请输入密钥直链URL（cert.key）：${plain}"
+                echo -e "${yellow}请输入密钥直链URL（${key_file_name}）：${plain}"
                 read -rp "密钥URL：" key_download_url
                 
                 if [[ -z "$cert_download_url" || -z "$key_download_url" ]]; then
                     echo -e "${red}证书或密钥 URL 不能为空！${plain}"
                 else
                     # 下载证书
-                    download_cert_from_url "$cert_download_url" "$key_download_url"
+                    download_cert_from_url "$cert_download_url" "$key_download_url" "$cert_remark"
                     if [[ $? -eq 0 ]]; then
                         # 设置每日自动更新
-                        setup_daily_cert_download "$cert_download_url" "$key_download_url"
+                        setup_daily_cert_download "$cert_download_url" "$key_download_url" "$cert_remark"
                         echo -e "${green}证书配置完成！每日将自动从直链获取最新证书${plain}"
                     else
                         echo -e "${red}证书下载失败，请检查 URL 后重试${plain}"
@@ -557,8 +568,8 @@ add_node_config() {
                 "CertMode": "$certmode",
                 "RejectUnknownSni": false,
                 "CertDomain": "$certdomain",
-                "CertFile": "/etc/BXtest/fullchain.cer",
-                "KeyFile": "/etc/BXtest/cert.key",
+                "CertFile": "/etc/BXtest/${cert_file_name:-fullchain.cer}",
+                "KeyFile": "/etc/BXtest/${key_file_name:-cert.key}",
                 "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
@@ -587,8 +598,8 @@ EOF
                 "CertMode": "$certmode",
                 "RejectUnknownSni": false,
                 "CertDomain": "$certdomain",
-                "CertFile": "/etc/BXtest/fullchain.cer",
-                "KeyFile": "/etc/BXtest/cert.key",
+                "CertFile": "/etc/BXtest/${cert_file_name:-fullchain.cer}",
+                "KeyFile": "/etc/BXtest/${key_file_name:-cert.key}",
                 "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
@@ -616,8 +627,8 @@ EOF
                 "CertMode": "$certmode",
                 "RejectUnknownSni": false,
                 "CertDomain": "$certdomain",
-                "CertFile": "/etc/BXtest/fullchain.cer",
-                "KeyFile": "/etc/BXtest/cert.key",
+                "CertFile": "/etc/BXtest/${cert_file_name:-fullchain.cer}",
+                "KeyFile": "/etc/BXtest/${key_file_name:-cert.key}",
                 "Email": "${cert_email:-BXtest@github.com}",
                 "Provider": "cloudflare",
                 "DNSEnv": {
