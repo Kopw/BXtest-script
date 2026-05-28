@@ -907,6 +907,7 @@ congestion:
   bbrProfile: aggressive
 resolver:
   type: system
+  ipv4Only: true
 sniff:
   enable: true
   timeout: 2s
