@@ -501,6 +501,15 @@ uninstall() {
         fi
         return 0
     fi
+    local keep_cert_assets=true
+    local cert_backup_dir=""
+    confirm "是否同时卸载 acme.sh 并清理已保存的证书和自动更新任务？" "n"
+    if [[ $? == 0 ]]; then
+        keep_cert_assets=false
+    elif [[ -d /etc/BXtest ]]; then
+        cert_backup_dir=$(mktemp -d /tmp/bxtest-cert-backup.XXXXXX)
+        find /etc/BXtest -maxdepth 1 \( -name "*.cer" -o -name "*.key" -o -name "*.pem" -o -name "update_cert.sh" \) -exec cp -a {} "$cert_backup_dir"/ \; 2>/dev/null
+    fi
     if [[ x"${release}" == x"alpine" ]]; then
         service BXtest stop
         rc-update del BXtest
@@ -514,16 +523,23 @@ uninstall() {
     fi
     rm /etc/BXtest/ -rf
     rm /usr/local/BXtest/ -rf
-    
-    # 询问是否清理 acme.sh 相关内容
-    confirm "是否同时卸载 acme.sh 及其证书？" "n"
-    if [[ $? == 0 ]]; then
-        # 移除 acme.sh 的 cron 任务
-        if crontab -l 2>/dev/null | grep -q "acme.sh"; then
-            crontab -l 2>/dev/null | grep -v "acme.sh" | crontab -
-            echo -e "${green}已清理 acme.sh 续期任务${plain}"
+
+    if [[ "$keep_cert_assets" == true ]]; then
+        mkdir -p /etc/BXtest
+        if [[ -n "$cert_backup_dir" && -d "$cert_backup_dir" ]]; then
+            cp -a "$cert_backup_dir"/. /etc/BXtest/ 2>/dev/null
+            rm -rf "$cert_backup_dir"
         fi
-        # 卸载 acme.sh
+        chmod 600 /etc/BXtest/*.key 2>/dev/null
+        chmod 644 /etc/BXtest/*.cer /etc/BXtest/*.pem 2>/dev/null
+        [[ -f /etc/BXtest/update_cert.sh ]] && chmod +x /etc/BXtest/update_cert.sh
+        echo -e "${green}已保留 /etc/BXtest 下的证书文件、更新脚本以及现有 cron 自动更新任务${plain}"
+    else
+        rm -rf "$cert_backup_dir" 2>/dev/null
+        if crontab -l 2>/dev/null | grep -Eq "acme.sh|update_cert.sh"; then
+            crontab -l 2>/dev/null | grep -Ev "acme.sh|update_cert.sh" | crontab -
+            echo -e "${green}已清理证书自动更新任务${plain}"
+        fi
         if [[ -f ~/.acme.sh/acme.sh ]]; then
             ~/.acme.sh/acme.sh --uninstall >/dev/null 2>&1
             rm -rf ~/.acme.sh
