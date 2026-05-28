@@ -459,11 +459,81 @@ update() {
     else
         version=$2
     fi
-    bash <(curl -Ls https://raw.githubusercontent.com/Kopw/BXtest-script/master/install.sh) $version
-    if [[ $? == 0 ]]; then
-        echo -e "${green}更新完成，已自动重启 BXtest，请使用 BXtest log 查看运行日志${plain}"
-        exit
+
+    local arch=$(uname -m)
+    if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
+        arch="64"
+    elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
+        arch="arm64-v8a"
+    elif [[ $arch == "s390x" ]]; then
+        arch="s390x"
+    else
+        arch="64"
+        echo -e "${yellow}检测架构失败，使用默认架构: ${arch}${plain}"
     fi
+
+    if [[ -z "$version" ]]; then
+        version=$(curl -Ls "https://api.github.com/repos/Kopw/BXtest/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if [[ -z "$version" ]]; then
+            echo -e "${red}检测 BXtest 最新版本失败，请稍后再试，或手动指定 BXtest 版本${plain}"
+            if [[ $# == 0 ]]; then
+                before_show_menu
+            fi
+            return 1
+        fi
+    fi
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d /tmp/bxtest-update.XXXXXX)
+    local zip_path="${tmp_dir}/BXtest-linux.zip"
+    local url="https://github.com/Kopw/BXtest/releases/download/${version}/BXtest-linux-${arch}.zip"
+
+    echo -e "${yellow}正在下载 BXtest ${version} (${arch})...${plain}"
+    wget --no-check-certificate -q --show-progress -O "$zip_path" "$url"
+    if [[ $? -ne 0 ]]; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}下载 BXtest ${version} 失败，请检查版本号或网络连接${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+
+    unzip -o "$zip_path" -d "$tmp_dir" >/dev/null 2>&1
+    if [[ $? -ne 0 || ! -f "${tmp_dir}/BXtest" ]]; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}解压 BXtest ${version} 失败，未找到 BXtest 可执行文件${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+
+    local binary_tmp="/usr/local/BXtest/BXtest.tmp.$$"
+    cp "${tmp_dir}/BXtest" "$binary_tmp"
+    if [[ $? -ne 0 ]]; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}替换 BXtest 程序失败${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+    chmod +x "$binary_tmp"
+    mv -f "$binary_tmp" /usr/local/BXtest/BXtest
+    if [[ $? -ne 0 ]]; then
+        rm -f "$binary_tmp"
+        rm -rf "$tmp_dir"
+        echo -e "${red}替换 BXtest 程序失败${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+    rm -rf "$tmp_dir"
+
+    restart 0
+    echo -e "${green}更新完成，仅替换了 BXtest 程序并重启服务，请使用 BXtest log 查看运行日志${plain}"
 
     if [[ $# == 0 ]]; then
         before_show_menu
@@ -1344,7 +1414,7 @@ show_usage() {
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
     echo "BXtest update       - 更新 BXtest"
-    echo "BXtest update x.x.x - 安装 BXtest 指定版本"
+    echo "BXtest update x.x.x - 更新 BXtest 到指定版本"
     echo "BXtest install      - 安装 BXtest"
     echo "BXtest uninstall    - 卸载 BXtest"
     echo "BXtest version      - 查看 BXtest 版本"
