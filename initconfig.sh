@@ -900,26 +900,19 @@ EOF
 
     # 创建 hy2config.yaml 文件           
     cat <<EOF > /etc/BXtest/hy2config.yaml
-quic:
-  initStreamReceiveWindow: 8388608
-  maxStreamReceiveWindow: 8388608
-  initConnReceiveWindow: 20971520
-  maxConnReceiveWindow: 20971520
-  maxIdleTimeout: 30s
-  maxIncomingStreams: 1024
-  disablePathMTUDiscovery: false
 ignoreClientBandwidth: false
 disableUDP: false
-udpIdleTimeout: 60s
+congestion:
+  type: bbr
+  bbrProfile: aggressive
 resolver:
   type: system
-acl:
-  inline:
-    - direct(geosite:google)
-    - reject(geosite:cn)
-    - reject(geoip:cn)
-masquerade:
-  type: 404
+sniff:
+  enable: true
+  timeout: 2s
+  rewriteDomain: false
+  tcpPorts: all
+  udpPorts: all
 EOF
     echo -e "${green}BXtest 配置文件生成完成,正在重新启动服务${plain}"
     bxtest restart
