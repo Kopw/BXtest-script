@@ -5,6 +5,144 @@ green='\033[0;32m'
 yellow='\033[0;33m'
 plain='\033[0m'
 
+BXTEST_GITHUB_API_URL="https://api.github.com/repos/Kopw/BXtest/releases/latest"
+BXTEST_GITHUB_RELEASE_URL="https://github.com/Kopw/BXtest/releases/download"
+BXTEST_RESOLVED_VERSION=""
+BXTEST_GITHUB_MIRROR=""
+BXTEST_GITHUB_MIRRORS=(
+    "https://gh.llkk.cc"
+    "https://ghfast.top"
+    "https://gh-proxy.com"
+    "https://hub.gitmirror.com"
+)
+
+normalize_github_mirror() {
+    local mirror="$1"
+    mirror=$(echo "$mirror" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    [[ -z "$mirror" ]] && return 1
+    if [[ "$mirror" != http://* && "$mirror" != https://* ]]; then
+        mirror="https://${mirror}"
+    fi
+    echo "${mirror%/}"
+}
+
+github_url_with_mirror() {
+    local mirror="$1"
+    local target_url="$2"
+    if [[ -z "$mirror" ]]; then
+        echo "$target_url"
+        return 0
+    fi
+
+    mirror=$(normalize_github_mirror "$mirror") || return 1
+    echo "${mirror}/${target_url}"
+}
+
+detect_latest_BXtest_version_from() {
+    local mirror="$1"
+    local api_url
+    api_url=$(github_url_with_mirror "$mirror" "$BXTEST_GITHUB_API_URL") || return 1
+    curl -fsSL "$api_url" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1
+}
+
+detect_latest_BXtest_version() {
+    local mirror
+    local version
+
+    BXTEST_RESOLVED_VERSION=""
+    BXTEST_GITHUB_MIRROR=""
+
+    version=$(detect_latest_BXtest_version_from "")
+    if [[ -n "$version" ]]; then
+        BXTEST_RESOLVED_VERSION="$version"
+        return 0
+    fi
+
+    echo -e "${yellow}检测 BXtest 版本失败，正在尝试内置 GitHub 镜像站点...${plain}"
+    for mirror in "${BXTEST_GITHUB_MIRRORS[@]}"; do
+        mirror=$(normalize_github_mirror "$mirror") || continue
+        echo -e "${yellow}尝试镜像：${mirror}${plain}"
+        version=$(detect_latest_BXtest_version_from "$mirror")
+        if [[ -n "$version" ]]; then
+            BXTEST_RESOLVED_VERSION="$version"
+            BXTEST_GITHUB_MIRROR="$mirror"
+            return 0
+        fi
+    done
+
+    while true; do
+        read -rp "内置镜像均不可用，请输入 GitHub 镜像站点（例如 https://gh.llkk.cc，直接回车取消）: " mirror
+        mirror=$(normalize_github_mirror "$mirror") || return 1
+        echo -e "${yellow}尝试镜像：${mirror}${plain}"
+        version=$(detect_latest_BXtest_version_from "$mirror")
+        if [[ -n "$version" ]]; then
+            BXTEST_RESOLVED_VERSION="$version"
+            BXTEST_GITHUB_MIRROR="$mirror"
+            return 0
+        fi
+        echo -e "${red}该镜像无法获取 BXtest 最新版本，请检查后重试${plain}"
+    done
+}
+
+download_BXtest_from() {
+    local mirror="$1"
+    local version="$2"
+    local output="$3"
+    local arch="$4"
+    local target_url="${BXTEST_GITHUB_RELEASE_URL}/${version}/BXtest-linux-${arch}.zip"
+    local download_url
+
+    download_url=$(github_url_with_mirror "$mirror" "$target_url") || return 1
+    wget --no-check-certificate -N -q --show-progress -O "$output" "$download_url"
+    if [[ $? -ne 0 ]]; then
+        rm -f "$output"
+        return 1
+    fi
+    return 0
+}
+
+download_BXtest_release() {
+    local version="$1"
+    local output="$2"
+    local arch="$3"
+    local mirror
+
+    if [[ -n "$BXTEST_GITHUB_MIRROR" ]]; then
+        echo -e "${yellow}正在通过镜像下载 BXtest ${version} (${arch})：${BXTEST_GITHUB_MIRROR}${plain}"
+        if download_BXtest_from "$BXTEST_GITHUB_MIRROR" "$version" "$output" "$arch"; then
+            return 0
+        fi
+        echo -e "${yellow}镜像下载失败，正在尝试原始 GitHub 地址...${plain}"
+    fi
+
+    echo -e "${yellow}正在下载 BXtest ${version} (${arch})...${plain}"
+    if download_BXtest_from "" "$version" "$output" "$arch"; then
+        return 0
+    fi
+
+    echo -e "${yellow}原始 GitHub 下载失败，正在尝试内置 GitHub 镜像站点...${plain}"
+    for mirror in "${BXTEST_GITHUB_MIRRORS[@]}"; do
+        mirror=$(normalize_github_mirror "$mirror") || continue
+        [[ -n "$BXTEST_GITHUB_MIRROR" && "$mirror" == "$BXTEST_GITHUB_MIRROR" ]] && continue
+        echo -e "${yellow}尝试镜像：${mirror}${plain}"
+        if download_BXtest_from "$mirror" "$version" "$output" "$arch"; then
+            BXTEST_GITHUB_MIRROR="$mirror"
+            return 0
+        fi
+    done
+
+    while true; do
+        read -rp "内置镜像均下载失败，请输入 GitHub 镜像站点（直接回车取消）: " mirror
+        mirror=$(normalize_github_mirror "$mirror") || return 1
+        echo -e "${yellow}尝试镜像：${mirror}${plain}"
+        if download_BXtest_from "$mirror" "$version" "$output" "$arch"; then
+            BXTEST_GITHUB_MIRROR="$mirror"
+            return 0
+        fi
+        echo -e "${red}该镜像下载失败，请检查后重试${plain}"
+    done
+}
+
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误: ${plain} 必须使用root用户运行此脚本！\n" && exit 1
 
@@ -473,26 +611,23 @@ update() {
     fi
 
     if [[ -z "$version" ]]; then
-        version=$(curl -Ls "https://api.github.com/repos/Kopw/BXtest/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ -z "$version" ]]; then
-            echo -e "${red}检测 BXtest 最新版本失败，请稍后再试，或手动指定 BXtest 版本${plain}"
+        if ! detect_latest_BXtest_version; then
+            echo -e "${red}检测 BXtest 最新版本失败，已尝试内置镜像和手动镜像，仍未能获取版本；请稍后再试，或手动指定 BXtest 版本${plain}"
             if [[ $# == 0 ]]; then
                 before_show_menu
             fi
             return 1
         fi
+        version="$BXTEST_RESOLVED_VERSION"
     fi
 
     local tmp_dir
     tmp_dir=$(mktemp -d /tmp/bxtest-update.XXXXXX)
     local zip_path="${tmp_dir}/BXtest-linux.zip"
-    local url="https://github.com/Kopw/BXtest/releases/download/${version}/BXtest-linux-${arch}.zip"
 
-    echo -e "${yellow}正在下载 BXtest ${version} (${arch})...${plain}"
-    wget --no-check-certificate -q --show-progress -O "$zip_path" "$url"
-    if [[ $? -ne 0 ]]; then
+    if ! download_BXtest_release "$version" "$zip_path" "$arch"; then
         rm -rf "$tmp_dir"
-        echo -e "${red}下载 BXtest ${version} 失败，请检查版本号或网络连接${plain}"
+        echo -e "${red}下载 BXtest ${version} 失败，请检查版本号、网络连接或 GitHub 镜像站点${plain}"
         if [[ $# == 0 ]]; then
             before_show_menu
         fi
