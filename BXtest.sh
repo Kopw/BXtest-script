@@ -968,13 +968,73 @@ install_smartdns_package() {
     return 0
 }
 
+normalize_ai_dns_server() {
+    local ai_dns_server="$1"
+    ai_dns_server=$(echo "$ai_dns_server" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    ai_dns_server="${ai_dns_server#udp://}"
+    ai_dns_server="${ai_dns_server#tcp://}"
+    ai_dns_server="${ai_dns_server%/}"
+
+    if [[ -z "$ai_dns_server" ]]; then
+        return 1
+    fi
+    if [[ "$ai_dns_server" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$ ]]; then
+        echo "$ai_dns_server"
+        return 0
+    fi
+    if [[ "$ai_dns_server" =~ ^\[[0-9A-Fa-f:]+\](:[0-9]+)?$ ]]; then
+        echo "$ai_dns_server"
+        return 0
+    fi
+    if [[ "$ai_dns_server" =~ ^[0-9A-Fa-f:]+$ && "$ai_dns_server" == *:* ]]; then
+        echo "[${ai_dns_server}]"
+        return 0
+    fi
+
+    return 1
+}
+
+prompt_ai_dns_server() {
+    local ai_dns_server="$1"
+    local normalized_ai_dns_server
+
+    if [[ -n "$ai_dns_server" ]]; then
+        normalized_ai_dns_server=$(normalize_ai_dns_server "$ai_dns_server")
+        if [[ -n "$normalized_ai_dns_server" ]]; then
+            echo "$normalized_ai_dns_server"
+            return 0
+        fi
+        echo -e "${red}AI 分流 DNS 地址格式不正确: ${ai_dns_server}${plain}" >&2
+        return 1
+    fi
+
+    while true; do
+        read -rp "请输入非中国大陆 AI 服务分流 DNS 服务器 IP（例如 8.8.8.8，可带端口）: " ai_dns_server
+        normalized_ai_dns_server=$(normalize_ai_dns_server "$ai_dns_server")
+        if [[ -n "$normalized_ai_dns_server" ]]; then
+            echo "$normalized_ai_dns_server"
+            return 0
+        fi
+        echo -e "${red}请输入有效的 IPv4/IPv6 地址，可选端口，例如 8.8.8.8 或 8.8.8.8:53${plain}"
+    done
+}
+
+prompt_enable_ai_dns_routing() {
+    if [[ -n "$1" ]]; then
+        return 0
+    fi
+
+    confirm "是否启用非中国大陆 AI 服务 DNS 分流" "n"
+}
+
 write_smartdns_config() {
+    local ai_dns_server="$1"
     mkdir -p /etc/smartdns /var/cache/smartdns /var/log/smartdns
     if [[ -f /etc/smartdns/smartdns.conf ]]; then
         cp -a /etc/smartdns/smartdns.conf "/etc/smartdns/smartdns.conf.bak.$(date +%Y%m%d%H%M%S)"
     fi
 
-    cat <<'EOF' > /etc/smartdns/smartdns.conf
+    cat > /etc/smartdns/smartdns.conf <<EOF
 ########################################
 # SmartDNS Config
 # - Listen: 127.0.0.1:53
@@ -1028,6 +1088,106 @@ server-https https://dns.google/dns-query -host-ip 8.8.4.4 -http-host dns.google
 server-tls [2001:4860:4860::8888]:853 -host-name dns.google -tls-host-verify dns.google
 server-tls [2001:4860:4860::8844]:853 -host-name dns.google -tls-host-verify dns.google
 EOF
+
+    if [[ -n "$ai_dns_server" ]]; then
+        cat >> /etc/smartdns/smartdns.conf <<EOF
+
+########################################
+# AI DNS Routing
+# - Non-China AI services use the ai group only
+# - Domain list source:
+#   https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.list
+########################################
+
+domain-set -name ai_noncn -type list -file /etc/smartdns/domain-set/ai_noncn.conf
+nameserver /domain-set:ai_noncn/ai
+server ${ai_dns_server} -group ai -exclude-default-group
+EOF
+    fi
+}
+
+write_smartdns_ai_domain_set() {
+    local ai_domain_url="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.list"
+    local ai_domain_file="/etc/smartdns/domain-set/ai_noncn.conf"
+    local tmp_file
+
+    mkdir -p /etc/smartdns/domain-set
+    tmp_file=$(mktemp /tmp/smartdns-ai-domains.XXXXXX)
+
+    if curl -fsSL "$ai_domain_url" -o "$tmp_file"; then
+        python3 - "$tmp_file" "$ai_domain_file" <<'PY'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+domains = []
+seen = set()
+
+for raw_line in src.read_text(encoding="utf-8", errors="ignore").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("+."):
+        line = line[2:]
+    elif line.startswith("."):
+        line = line[1:]
+    elif line.startswith("domain:"):
+        line = line.split(":", 1)[1].strip()
+    elif line.startswith("full:"):
+        line = line.split(":", 1)[1].strip()
+    elif line.startswith("regexp:") or line.startswith("keyword:"):
+        continue
+    line = line.strip().lower().rstrip(".")
+    if not line or "/" in line or ":" in line:
+        continue
+    if line not in seen:
+        seen.add(line)
+        domains.append(line)
+
+if not domains:
+    raise SystemExit("empty ai domain set")
+
+dst.write_text("\n".join(domains) + "\n", encoding="utf-8")
+PY
+        local convert_result=$?
+        rm -f "$tmp_file"
+        if [[ $convert_result -eq 0 ]]; then
+            return 0
+        fi
+    else
+        rm -f "$tmp_file"
+    fi
+
+    echo -e "${yellow}下载 AI 域名列表失败，写入内置备用列表${plain}"
+    cat <<'EOF' > "$ai_domain_file"
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+openaiapi-site.azureedge.net
+anthropic.com
+claude.ai
+poe.com
+perplexity.ai
+pplx.ai
+gemini.google.com
+ai.google.dev
+makersuite.google.com
+notebooklm.google.com
+cohere.ai
+cohere.com
+clipdrop.co
+jasper.ai
+elevenlabs.io
+huggingface.co
+replicate.com
+midjourney.com
+cursor.com
+cursor.sh
+githubcopilot.com
+copilot-proxy.githubusercontent.com
+EOF
 }
 
 update_bxtest_dns_to_smartdns() {
@@ -1069,22 +1229,62 @@ servers = dns.setdefault("servers", [])
 
 server_tag = "smartdns"
 replacement = {
-    "tag": server_tag,
+    "tag": "cf",
     "address": "tcp://127.0.0.1"
 }
 
-for index, server in enumerate(servers):
-    if isinstance(server, dict) and server.get("tag") in ("cf", "smartdns"):
-        servers[index] = replacement
-        break
-else:
-    servers.insert(0, replacement)
+new_servers = []
+replaced = False
+for server in servers:
+    if not isinstance(server, dict):
+        new_servers.append(server)
+        continue
+    tag = server.get("tag")
+    if tag == "ai_dns":
+        continue
+    if tag in ("cf", "smartdns"):
+        if not replaced:
+            new_servers.append(replacement)
+            replaced = True
+        continue
+    new_servers.append(server)
+if not replaced:
+    new_servers.insert(0, replacement)
+dns["servers"] = new_servers
+
+rules = dns.get("rules")
+if isinstance(rules, list):
+    dns["rules"] = [
+        rule for rule in rules
+        if not (isinstance(rule, dict) and rule.get("server") == "ai_dns")
+    ]
+    if not dns["rules"]:
+        dns.pop("rules", None)
+dns["final"] = "cf"
+dns["strategy"] = "ipv4_only"
 
 for outbound in data.get("outbounds", []):
     if isinstance(outbound, dict):
         resolver = outbound.get("domain_resolver")
         if isinstance(resolver, dict) and resolver.get("server") in ("cf", "smartdns", None):
-            resolver["server"] = server_tag
+            resolver["server"] = "cf"
+
+route = data.get("route")
+if isinstance(route, dict):
+    route_rules = route.get("rules")
+    if isinstance(route_rules, list):
+        route["rules"] = [
+            rule for rule in route_rules
+            if not (isinstance(rule, dict) and rule.get("server") == "ai_dns")
+        ]
+    rule_sets = route.get("rule_set")
+    if isinstance(rule_sets, list):
+        route["rule_set"] = [
+            rule_set for rule_set in rule_sets
+            if not (isinstance(rule_set, dict) and rule_set.get("tag") == "geosite-category-ai-!cn")
+        ]
+        if not route["rule_set"]:
+            route.pop("rule_set", None)
 
 path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 PY
@@ -1166,29 +1366,40 @@ install_smartdns() {
         return 1
     fi
 
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${yellow}正在安装 python3 以更新配置文件...${plain}"
+    local ai_dns_server=""
+    local enable_ai_dns=false
+    if prompt_enable_ai_dns_routing "$2"; then
+        enable_ai_dns=true
+        ai_dns_server=$(prompt_ai_dns_server "$2")
+        if [[ -z "$ai_dns_server" ]]; then
+            [[ $# == 0 ]] && before_show_menu
+            return 1
+        fi
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        echo -e "${yellow}正在安装 curl/python3 以更新配置文件...${plain}"
         case "$release" in
             "debian"|"ubuntu")
                 apt-get update -y >/dev/null 2>&1
-                apt-get install -y python3 >/dev/null 2>&1
+                apt-get install -y curl python3 >/dev/null 2>&1
                 ;;
             "centos")
-                yum install -y python3 >/dev/null 2>&1
+                yum install -y curl python3 >/dev/null 2>&1
                 ;;
             "alpine")
                 apk update >/dev/null 2>&1
-                apk add python3 >/dev/null 2>&1
+                apk add curl python3 >/dev/null 2>&1
                 ;;
             "arch")
                 pacman -Sy --noconfirm >/dev/null 2>&1
-                pacman -S --noconfirm --needed python >/dev/null 2>&1
+                pacman -S --noconfirm --needed curl python >/dev/null 2>&1
                 ;;
         esac
     fi
 
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${red}未检测到 python3，无法安全更新 BXtest 配置文件${plain}"
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+        echo -e "${red}未检测到 curl/python3，无法安全更新 BXtest 配置文件${plain}"
         [[ $# == 0 ]] && before_show_menu
         return 1
     fi
@@ -1199,7 +1410,16 @@ install_smartdns() {
         return 1
     fi
 
-    write_smartdns_config
+    write_smartdns_config "$ai_dns_server"
+    if [[ "$enable_ai_dns" == true ]]; then
+        if ! write_smartdns_ai_domain_set; then
+            echo -e "${red}写入 SmartDNS AI 分流域名列表失败${plain}"
+            [[ $# == 0 ]] && before_show_menu
+            return 1
+        fi
+    else
+        rm -f /etc/smartdns/domain-set/ai_noncn.conf
+    fi
     if ! update_bxtest_dns_to_smartdns; then
         [[ $# == 0 ]] && before_show_menu
         return 1
@@ -1216,6 +1436,11 @@ install_smartdns() {
 
     echo -e "${green}smartdns 已安装并写入 /etc/smartdns/smartdns.conf${plain}"
     echo -e "${green}已将 BXtest 的 hysteria2、sing-box 及通用 DNS 配置指向 tcp://127.0.0.1${plain}"
+    if [[ "$enable_ai_dns" == true ]]; then
+        echo -e "${green}已在 SmartDNS 中启用非中国大陆 AI 服务 DNS 分流，AI 域名走 ${ai_dns_server}${plain}"
+    else
+        echo -e "${green}未启用 AI DNS 分流，所有域名使用 SmartDNS 默认上游${plain}"
+    fi
     confirm_restart "$@"
 }
 
@@ -1888,7 +2113,8 @@ show_usage() {
     echo "BXtest log          - 查看 BXtest 日志"
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
-    echo "BXtest smartdns     - 安装 smartdns 并将 DNS 解析改为 tcp://127.0.0.1"
+    echo "BXtest smartdns [AI_DNS] - 安装 smartdns，可选启用 AI 分流"
+    echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 到指定版本"
     echo "BXtest install      - 安装 BXtest"
@@ -1922,7 +2148,7 @@ show_menu() {
   ${green}14.${plain} 升级 BXtest 维护脚本
   ${green}15.${plain} 生成 BXtest 配置文件
   ${green}16.${plain} 放行 VPS 的所有网络端口
-  ${green}17.${plain} 安装 smartdns 并使用本机 DNS
+  ${green}17.${plain} 安装 smartdns 并可选启用 AI DNS 分流
   ${green}18.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
@@ -1966,7 +2192,7 @@ if [[ $# > 0 ]]; then
         "update") check_install 0 && update 0 $2 ;;
         "config") config $* ;;
         "generate") generate_config_file ;;
-        "smartdns") install_smartdns 0 ;;
+        "smartdns") install_smartdns 0 "$2" ;;
         "install") check_uninstall 0 && install 0 ;;
         "uninstall") check_install 0 && uninstall 0 ;;
         "x25519") check_install 0 && generate_x25519_key 0 ;;
