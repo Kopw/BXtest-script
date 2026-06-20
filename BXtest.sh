@@ -1254,7 +1254,7 @@ write_smartdns_config() {
 ########################################
 # SmartDNS Config
 # - Listen: 127.0.0.1:53
-# - Upstream: Cloudflare & Google (IPv4 + IPv6 DoT/DoH)
+# - Upstream: Cloudflare & Google (IPv4 + IPv6 DoT)
 ########################################
 
 ########## Listen ##########
@@ -1285,24 +1285,24 @@ response-mode fastest-ip
 max-reply-ip-num 2
 
 ########################################
-# Upstream DNS (DoT / DoH)
+# Upstream DNS (DoT)
 ########################################
 
 # === Cloudflare (IPv4 DoT) ===
-server-tls 1.1.1.1:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
-server-tls 1.0.0.1:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+server-tls 1.1.1.1
+server-tls 1.0.0.1
 
 # === Cloudflare (IPv6 DoT) ===
-server-tls [2606:4700:4700::1111]:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
-server-tls [2606:4700:4700::1001]:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+server-tls 2606:4700:4700::1111
+server-tls 2606:4700:4700::1001
 
-# === Google (IPv4 DoH - 备选使用DoH) ===
-server-https https://dns.google/dns-query -host-ip 8.8.8.8 -http-host dns.google -tls-host-verify dns.google
-server-https https://dns.google/dns-query -host-ip 8.8.4.4 -http-host dns.google -tls-host-verify dns.google
+# === Google (IPv4 DoT) ===
+server-tls 8.8.8.8
+server-tls 8.8.4.4
 
 # === Google (IPv6 DoT) ===
-server-tls [2001:4860:4860::8888]:853 -host-name dns.google -tls-host-verify dns.google
-server-tls [2001:4860:4860::8844]:853 -host-name dns.google -tls-host-verify dns.google
+server-tls 2001:4860:4860::8888
+server-tls 2001:4860:4860::8844
 EOF
 
     if [[ -n "$ai_dns_server" ]]; then
