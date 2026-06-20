@@ -1551,7 +1551,7 @@ install_smartdns() {
         fi
     fi
 
-    if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || { [[ x"${release}" == x"alpine" ]] && [[ ! -f /etc/ssl/certs/ca-certificates.crt ]]; }; then
         echo -e "${yellow}正在安装 curl/python3 以更新配置文件...${plain}"
         case "$release" in
             "debian"|"ubuntu")
@@ -1563,7 +1563,8 @@ install_smartdns() {
                 ;;
             "alpine")
                 apk update >/dev/null 2>&1
-                apk add curl python3 >/dev/null 2>&1
+                apk add curl python3 ca-certificates >/dev/null 2>&1
+                update-ca-certificates >/dev/null 2>&1
                 ;;
             "arch")
                 pacman -Sy --noconfirm >/dev/null 2>&1
