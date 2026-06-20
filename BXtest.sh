@@ -2398,9 +2398,9 @@ EOF
 ignoreClientBandwidth: false
 disableUDP: false
 udpForwardingRedundancy:
-  enabled: false
-  writeToMultiplier: 1
-  sendMessageMultiplier: 1
+  enabled: true
+  writeToMultiplier: 10
+  sendMessageMultiplier: 10
 congestion:
   type: bbr
   bbrProfile: aggressive
