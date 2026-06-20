@@ -569,8 +569,12 @@ confirm() {
 confirm_restart() {
     confirm "是否重启BXtest" "y"
     if [[ $? == 0 ]]; then
-        restart
-    else
+        if [[ $# == 0 ]]; then
+            restart
+        else
+            restart 0
+        fi
+    elif [[ $# == 0 ]]; then
         show_menu
     fi
 }
@@ -877,6 +881,342 @@ show_log() {
     if [[ $# == 0 ]]; then
         before_show_menu
     fi
+}
+
+install_smartdns_package() {
+    if command -v smartdns >/dev/null 2>&1; then
+        echo -e "${green}检测到 smartdns 已安装，跳过安装步骤${plain}"
+        return 0
+    fi
+
+    echo -e "${yellow}正在安装 smartdns...${plain}"
+    case "$release" in
+        "debian"|"ubuntu")
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y smartdns >/dev/null 2>&1 && return 0
+            ;;
+        "centos")
+            yum install -y smartdns >/dev/null 2>&1 && return 0
+            ;;
+        "alpine")
+            apk update >/dev/null 2>&1
+            apk add smartdns >/dev/null 2>&1 && return 0
+            ;;
+        "arch")
+            pacman -Sy --noconfirm >/dev/null 2>&1
+            pacman -S --noconfirm --needed smartdns >/dev/null 2>&1 && return 0
+            ;;
+    esac
+
+    echo -e "${yellow}系统软件源未能安装 smartdns，尝试从官方 release 安装...${plain}"
+    local arch smartdns_arch api_url release_json download_url tmp_dir pkg_path
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) smartdns_arch="x86_64" ;;
+        i386|i686) smartdns_arch="x86" ;;
+        aarch64|arm64) smartdns_arch="aarch64" ;;
+        armv7l|armv6l|arm) smartdns_arch="arm" ;;
+        mips) smartdns_arch="mips" ;;
+        mipsel) smartdns_arch="mipsel" ;;
+        *)
+            echo -e "${red}暂不支持当前架构安装 smartdns: ${arch}${plain}"
+            return 1
+            ;;
+    esac
+
+    api_url="https://api.github.com/repos/pymumu/smartdns/releases/latest"
+    release_json=$(curl -fsSL "$api_url" 2>/dev/null)
+    if [[ -z "$release_json" ]]; then
+        echo -e "${red}获取 smartdns 最新 release 信息失败${plain}"
+        return 1
+    fi
+
+    download_url=$(echo "$release_json" | grep -oE "https://[^\"]*smartdns\.[^\"]*\.${smartdns_arch}-linux-all\.tar\.gz" | head -n 1)
+    if [[ -z "$download_url" ]]; then
+        echo -e "${red}未找到当前架构的 smartdns 安装包: ${smartdns_arch}${plain}"
+        return 1
+    fi
+
+    tmp_dir=$(mktemp -d /tmp/smartdns-install.XXXXXX)
+    pkg_path="${tmp_dir}/smartdns.tar.gz"
+    if ! curl -fL "$download_url" -o "$pkg_path"; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}下载 smartdns 安装包失败${plain}"
+        return 1
+    fi
+
+    if ! tar -xzf "$pkg_path" -C "$tmp_dir"; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}解压 smartdns 安装包失败${plain}"
+        return 1
+    fi
+
+    if [[ ! -x "${tmp_dir}/smartdns/install" ]]; then
+        rm -rf "$tmp_dir"
+        echo -e "${red}smartdns 安装包缺少 install 脚本${plain}"
+        return 1
+    fi
+
+    (cd "${tmp_dir}/smartdns" && sh ./install -i >/dev/null 2>&1)
+    local install_result=$?
+    rm -rf "$tmp_dir"
+    if [[ $install_result -ne 0 ]]; then
+        echo -e "${red}smartdns 官方安装脚本执行失败${plain}"
+        return 1
+    fi
+
+    return 0
+}
+
+write_smartdns_config() {
+    mkdir -p /etc/smartdns /var/cache/smartdns /var/log/smartdns
+    if [[ -f /etc/smartdns/smartdns.conf ]]; then
+        cp -a /etc/smartdns/smartdns.conf "/etc/smartdns/smartdns.conf.bak.$(date +%Y%m%d%H%M%S)"
+    fi
+
+    cat <<'EOF' > /etc/smartdns/smartdns.conf
+########################################
+# SmartDNS Config
+# - Listen: 127.0.0.1:53
+# - Upstream: Cloudflare & Google (IPv4 + IPv6 DoT/DoH)
+########################################
+
+########## Listen ##########
+bind 127.0.0.1:53
+bind-tcp 127.0.0.1:53
+
+########## Disable IPv6 resolving to Client ##########
+# 注意：这里配置的是“不向客户端返回 AAAA 记录”，防止客户端连接慢。
+# 但 SmartDNS 服务端本身依然可以使用 IPv6 上游去查询数据。
+force-AAAA-SOA yes
+
+########## Cache / Log ##########
+cache-size 8192
+cache-persist yes
+cache-file /var/cache/smartdns/smartdns.cache
+
+log-level notice
+log-file /var/log/smartdns/smartdns.log
+log-size 2M
+log-num 8
+
+########## Speed Check & Response ##########
+# 测速模式：ping + TCP 443
+speed-check-mode tcp:443,ping
+# 响应模式：返回测速最快的 IP
+response-mode fastest-ip
+# 最多返回 2 个 IP
+max-reply-ip-num 2
+
+########################################
+# Upstream DNS (DoT / DoH)
+########################################
+
+# === Cloudflare (IPv4 DoT) ===
+server-tls 1.1.1.1:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+server-tls 1.0.0.1:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+
+# === Cloudflare (IPv6 DoT) ===
+server-tls [2606:4700:4700::1111]:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+server-tls [2606:4700:4700::1001]:853 -host-name one.one.one.one -tls-host-verify one.one.one.one
+
+# === Google (IPv4 DoH - 备选使用DoH) ===
+server-https https://dns.google/dns-query -host-ip 8.8.8.8 -http-host dns.google -tls-host-verify dns.google
+server-https https://dns.google/dns-query -host-ip 8.8.4.4 -http-host dns.google -tls-host-verify dns.google
+
+# === Google (IPv6 DoT) ===
+server-tls [2001:4860:4860::8888]:853 -host-name dns.google -tls-host-verify dns.google
+server-tls [2001:4860:4860::8844]:853 -host-name dns.google -tls-host-verify dns.google
+EOF
+}
+
+update_bxtest_dns_to_smartdns() {
+    mkdir -p /etc/BXtest
+
+    if [[ -f /etc/BXtest/dns.json ]]; then
+        cp -a /etc/BXtest/dns.json "/etc/BXtest/dns.json.bak.$(date +%Y%m%d%H%M%S)"
+    fi
+    if ! python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/etc/BXtest/dns.json")
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        data = {}
+data["servers"] = ["tcp://127.0.0.1"]
+data["tag"] = data.get("tag") or "dns_inbound"
+path.write_text(json.dumps(data, indent=4, ensure_ascii=False) + "\n")
+PY
+    then
+        echo -e "${red}更新 /etc/BXtest/dns.json 失败${plain}"
+        return 1
+    fi
+
+    if [[ -f /etc/BXtest/sing_origin.json ]]; then
+        cp -a /etc/BXtest/sing_origin.json "/etc/BXtest/sing_origin.json.bak.$(date +%Y%m%d%H%M%S)"
+        if ! python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/etc/BXtest/sing_origin.json")
+data = json.loads(path.read_text())
+dns = data.setdefault("dns", {})
+servers = dns.setdefault("servers", [])
+
+server_tag = "smartdns"
+replacement = {
+    "tag": server_tag,
+    "address": "tcp://127.0.0.1"
+}
+
+for index, server in enumerate(servers):
+    if isinstance(server, dict) and server.get("tag") in ("cf", "smartdns"):
+        servers[index] = replacement
+        break
+else:
+    servers.insert(0, replacement)
+
+for outbound in data.get("outbounds", []):
+    if isinstance(outbound, dict):
+        resolver = outbound.get("domain_resolver")
+        if isinstance(resolver, dict) and resolver.get("server") in ("cf", "smartdns", None):
+            resolver["server"] = server_tag
+
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+PY
+        then
+            echo -e "${red}更新 /etc/BXtest/sing_origin.json 失败${plain}"
+            return 1
+        fi
+    fi
+
+    if [[ -f /etc/BXtest/hy2config.yaml ]]; then
+        cp -a /etc/BXtest/hy2config.yaml "/etc/BXtest/hy2config.yaml.bak.$(date +%Y%m%d%H%M%S)"
+        if ! python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/etc/BXtest/hy2config.yaml")
+lines = path.read_text().splitlines()
+out = []
+i = 0
+n = len(lines)
+inserted = False
+
+resolver_block = [
+    "resolver:",
+    "  type: tcp",
+    "  ipv4Only: true",
+    "  tcp:",
+    "    addr: 127.0.0.1:53",
+]
+
+while i < n:
+    line = lines[i]
+    if line.startswith("resolver:"):
+        out.extend(resolver_block)
+        inserted = True
+        i += 1
+        while i < n:
+            current = lines[i]
+            stripped = current.strip()
+            if stripped and not current.startswith((" ", "\t")):
+                break
+            i += 1
+        continue
+    out.append(line)
+    i += 1
+
+if not inserted:
+    if out and out[-1].strip():
+        out.append("")
+    out.extend(resolver_block)
+
+path.write_text("\n".join(out) + "\n")
+PY
+        then
+            echo -e "${red}更新 /etc/BXtest/hy2config.yaml 失败${plain}"
+            return 1
+        fi
+    fi
+}
+
+restart_smartdns_service() {
+    if [[ x"${release}" == x"alpine" ]]; then
+        rc-update add smartdns default >/dev/null 2>&1
+        rc-service smartdns restart >/dev/null 2>&1 || service smartdns restart >/dev/null 2>&1
+        sleep 1
+        rc-service smartdns status >/dev/null 2>&1 || service smartdns status >/dev/null 2>&1
+        return $?
+    fi
+
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable smartdns >/dev/null 2>&1
+    systemctl restart smartdns >/dev/null 2>&1
+    sleep 1
+    systemctl is-active --quiet smartdns
+}
+
+install_smartdns() {
+    check_install "$@"
+    if [[ $? != 0 ]]; then
+        return 1
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${yellow}正在安装 python3 以更新配置文件...${plain}"
+        case "$release" in
+            "debian"|"ubuntu")
+                apt-get update -y >/dev/null 2>&1
+                apt-get install -y python3 >/dev/null 2>&1
+                ;;
+            "centos")
+                yum install -y python3 >/dev/null 2>&1
+                ;;
+            "alpine")
+                apk update >/dev/null 2>&1
+                apk add python3 >/dev/null 2>&1
+                ;;
+            "arch")
+                pacman -Sy --noconfirm >/dev/null 2>&1
+                pacman -S --noconfirm --needed python >/dev/null 2>&1
+                ;;
+        esac
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${red}未检测到 python3，无法安全更新 BXtest 配置文件${plain}"
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    if ! install_smartdns_package; then
+        echo -e "${red}smartdns 安装失败${plain}"
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    write_smartdns_config
+    if ! update_bxtest_dns_to_smartdns; then
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    if ! restart_smartdns_service; then
+        echo -e "${red}smartdns 启动失败，请检查 127.0.0.1:53 是否被 systemd-resolved 或其他 DNS 服务占用${plain}"
+        if [[ x"${release}" != x"alpine" ]]; then
+            echo -e "${yellow}可使用 journalctl -u smartdns -e --no-pager 查看 smartdns 日志${plain}"
+        fi
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    echo -e "${green}smartdns 已安装并写入 /etc/smartdns/smartdns.conf${plain}"
+    echo -e "${green}已将 BXtest 的 hysteria2、sing-box 及通用 DNS 配置指向 tcp://127.0.0.1${plain}"
+    confirm_restart "$@"
 }
 
 install_bbr() {
@@ -1548,6 +1888,7 @@ show_usage() {
     echo "BXtest log          - 查看 BXtest 日志"
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
+    echo "BXtest smartdns     - 安装 smartdns 并将 DNS 解析改为 tcp://127.0.0.1"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 到指定版本"
     echo "BXtest install      - 安装 BXtest"
@@ -1581,11 +1922,12 @@ show_menu() {
   ${green}14.${plain} 升级 BXtest 维护脚本
   ${green}15.${plain} 生成 BXtest 配置文件
   ${green}16.${plain} 放行 VPS 的所有网络端口
-  ${green}17.${plain} 退出脚本
+  ${green}17.${plain} 安装 smartdns 并使用本机 DNS
+  ${green}18.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-17]: " num
+    echo && read -rp "请输入选择 [0-18]: " num
 
     case "${num}" in
         0) config ;;
@@ -1605,8 +1947,9 @@ show_menu() {
         14) update_shell ;;
         15) generate_config_file ;;
         16) open_ports ;;
-        17) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-16]${plain}" ;;
+        17) install_smartdns ;;
+        18) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-18]${plain}" ;;
     esac
 }
 
@@ -1623,6 +1966,7 @@ if [[ $# > 0 ]]; then
         "update") check_install 0 && update 0 $2 ;;
         "config") config $* ;;
         "generate") generate_config_file ;;
+        "smartdns") install_smartdns 0 ;;
         "install") check_uninstall 0 && install 0 ;;
         "uninstall") check_install 0 && uninstall 0 ;;
         "x25519") check_install 0 && generate_x25519_key 0 ;;

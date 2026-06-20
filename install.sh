@@ -403,6 +403,7 @@ EOF
     echo "BXtest log          - 查看 BXtest 日志"
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
+    echo "BXtest smartdns     - 安装 smartdns 并将 DNS 解析改为 tcp://127.0.0.1"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 指定版本"
     echo "BXtest install      - 安装 BXtest"
