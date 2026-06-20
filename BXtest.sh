@@ -1182,6 +1182,7 @@ EOF
 ########################################
 # AI DNS Routing
 # - Non-China AI services use the ai group only
+# - Domain set file is updated by /usr/local/BXtest/update_smartdns_ai_domains.sh
 # - Domain list source:
 #   https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.list
 ########################################
@@ -1193,16 +1194,31 @@ EOF
     fi
 }
 
-write_smartdns_ai_domain_set() {
-    local ai_domain_url="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.list"
-    local ai_domain_file="/etc/smartdns/domain-set/ai_noncn.conf"
-    local tmp_file
+write_smartdns_ai_update_script() {
+    local update_script="/usr/local/BXtest/update_smartdns_ai_domains.sh"
 
-    mkdir -p /etc/smartdns/domain-set
-    tmp_file=$(mktemp /tmp/smartdns-ai-domains.XXXXXX)
+    mkdir -p /usr/local/BXtest /etc/smartdns/domain-set
+    cat <<'EOF' > "$update_script"
+#!/bin/sh
 
-    if curl -fsSL "$ai_domain_url" -o "$tmp_file"; then
-        python3 - "$tmp_file" "$ai_domain_file" <<'PY'
+AI_DOMAIN_URL="https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.list"
+AI_DOMAIN_FILE="/etc/smartdns/domain-set/ai_noncn.conf"
+TMP_FILE="$(mktemp /tmp/smartdns-ai-domains.XXXXXX)"
+TMP_OUTPUT="$(mktemp /tmp/smartdns-ai-domains-output.XXXXXX)"
+
+cleanup() {
+    rm -f "$TMP_FILE" "$TMP_OUTPUT"
+}
+trap cleanup EXIT
+
+mkdir -p /etc/smartdns/domain-set
+
+if ! curl -fsSL "$AI_DOMAIN_URL" -o "$TMP_FILE"; then
+    echo "download AI domain list failed" >&2
+    exit 1
+fi
+
+if ! python3 - "$TMP_FILE" "$TMP_OUTPUT" <<'PY'
 from pathlib import Path
 import sys
 
@@ -1237,16 +1253,20 @@ if not domains:
 
 dst.write_text("\n".join(domains) + "\n", encoding="utf-8")
 PY
-        local convert_result=$?
-        rm -f "$tmp_file"
-        if [[ $convert_result -eq 0 ]]; then
-            return 0
-        fi
-    else
-        rm -f "$tmp_file"
-    fi
+then
+    echo "convert AI domain list failed" >&2
+    exit 1
+fi
 
-    echo -e "${yellow}下载 AI 域名列表失败，写入内置备用列表${plain}"
+install -m 0644 "$TMP_OUTPUT" "$AI_DOMAIN_FILE"
+exit $?
+EOF
+    chmod +x "$update_script"
+}
+
+write_smartdns_ai_domain_fallback_set() {
+    local ai_domain_file="/etc/smartdns/domain-set/ai_noncn.conf"
+    mkdir -p /etc/smartdns/domain-set
     cat <<'EOF' > "$ai_domain_file"
 openai.com
 chatgpt.com
@@ -1275,6 +1295,64 @@ cursor.sh
 githubcopilot.com
 copilot-proxy.githubusercontent.com
 EOF
+}
+
+write_smartdns_ai_domain_set() {
+    local update_script="/usr/local/BXtest/update_smartdns_ai_domains.sh"
+
+    write_smartdns_ai_update_script
+    if "$update_script"; then
+        return 0
+    fi
+
+    if [[ -f /etc/smartdns/domain-set/ai_noncn.conf ]]; then
+        echo -e "${yellow}更新 AI 域名列表失败，保留现有规则文件${plain}"
+        return 0
+    fi
+
+    echo -e "${yellow}下载 AI 域名列表失败，写入内置备用列表${plain}"
+    write_smartdns_ai_domain_fallback_set
+}
+
+setup_smartdns_ai_domain_update_cron() {
+    local update_script="/usr/local/BXtest/update_smartdns_ai_domains.sh"
+    local cron_cmd="17 4 * * * ${update_script} >/dev/null 2>&1"
+
+    case "$release" in
+        "debian"|"ubuntu")
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y cron >/dev/null 2>&1
+            systemctl enable cron >/dev/null 2>&1
+            systemctl start cron >/dev/null 2>&1
+            ;;
+        "centos")
+            yum install -y cronie >/dev/null 2>&1
+            systemctl enable crond >/dev/null 2>&1
+            systemctl start crond >/dev/null 2>&1
+            ;;
+        "alpine")
+            apk update >/dev/null 2>&1
+            apk add dcron >/dev/null 2>&1
+            rc-update add dcron default >/dev/null 2>&1
+            rc-service dcron start >/dev/null 2>&1
+            ;;
+        "arch")
+            pacman -Sy --noconfirm >/dev/null 2>&1
+            pacman -S --noconfirm --needed cronie >/dev/null 2>&1
+            systemctl enable cronie >/dev/null 2>&1
+            systemctl start cronie >/dev/null 2>&1
+            ;;
+    esac
+
+    if crontab -l 2>/dev/null | grep -q "$update_script"; then
+        crontab -l 2>/dev/null | grep -v "$update_script" | crontab -
+    fi
+    (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
+    if [[ $? -ne 0 ]]; then
+        echo -e "${yellow}设置 AI 分流规则自动更新任务失败，请手动添加 cron: ${cron_cmd}${plain}"
+        return 1
+    fi
+    return 0
 }
 
 update_bxtest_dns_to_smartdns() {
@@ -1507,7 +1585,12 @@ install_smartdns() {
             [[ $# == 0 ]] && before_show_menu
             return 1
         fi
+        setup_smartdns_ai_domain_update_cron
     else
+        if crontab -l 2>/dev/null | grep -q "/usr/local/BXtest/update_smartdns_ai_domains.sh"; then
+            crontab -l 2>/dev/null | grep -v "/usr/local/BXtest/update_smartdns_ai_domains.sh" | crontab -
+        fi
+        rm -f /usr/local/BXtest/update_smartdns_ai_domains.sh
         rm -f /etc/smartdns/domain-set/ai_noncn.conf
     fi
     if ! update_bxtest_dns_to_smartdns; then
@@ -1528,6 +1611,7 @@ install_smartdns() {
     echo -e "${green}已将 BXtest 的 hysteria2、sing-box 及通用 DNS 配置指向 tcp://127.0.0.1${plain}"
     if [[ "$enable_ai_dns" == true ]]; then
         echo -e "${green}已在 SmartDNS 中启用非中国大陆 AI 服务 DNS 分流，AI 域名走 ${ai_dns_server}${plain}"
+        echo -e "${green}已设置每日 04:17 自动更新 AI 分流规则文件，不会重启 smartdns${plain}"
     else
         echo -e "${green}未启用 AI DNS 分流，所有域名使用 SmartDNS 默认上游${plain}"
     fi
