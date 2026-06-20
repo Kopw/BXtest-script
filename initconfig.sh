@@ -904,8 +904,11 @@ ignoreClientBandwidth: false
 disableUDP: false
 udpForwardingRedundancy:
   enabled: true
-  writeToMultiplier: 10
-  sendMessageMultiplier: 10
+  writeToMultiplier: 4
+  sendMessageMultiplier: 8
+acl:
+  inline:
+    - reject(all, udp/443)
 congestion:
   type: bbr
   bbrProfile: aggressive

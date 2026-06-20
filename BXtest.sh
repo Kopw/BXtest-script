@@ -2399,8 +2399,11 @@ ignoreClientBandwidth: false
 disableUDP: false
 udpForwardingRedundancy:
   enabled: true
-  writeToMultiplier: 10
-  sendMessageMultiplier: 10
+  writeToMultiplier: 4
+  sendMessageMultiplier: 8
+acl:
+  inline:
+    - reject(all, udp/443)
 congestion:
   type: bbr
   bbrProfile: aggressive
@@ -2436,6 +2439,142 @@ open_ports() {
     echo -e "${green}放开防火墙端口成功！${plain}"
 }
 
+update_hysteria_yaml_defaults() {
+    local hy2_config="/etc/BXtest/hy2config.yaml"
+
+    if [[ ! -f "${hy2_config}" ]]; then
+        echo -e "${red}${hy2_config} not found, please generate Hysteria config first${plain}"
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${red}python3 not found, unable to update ${hy2_config}${plain}"
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    cp -a "${hy2_config}" "${hy2_config}.bak.$(date +%Y%m%d%H%M%S)"
+    if ! python3 - <<'PY'
+import re
+from pathlib import Path
+
+path = Path("/etc/BXtest/hy2config.yaml")
+lines = path.read_text().splitlines()
+
+udp_block = [
+    "udpForwardingRedundancy:",
+    "  enabled: true",
+    "  writeToMultiplier: 4",
+    "  sendMessageMultiplier: 8",
+]
+acl_rule = "reject(all, udp/443)"
+acl_block = [
+    "acl:",
+    "  inline:",
+    f"    - {acl_rule}",
+]
+
+
+def top_level_key_range(items, key):
+    key_re = re.compile(rf"^{re.escape(key)}\s*:")
+    for index, line in enumerate(items):
+        if not key_re.match(line):
+            continue
+        end = index + 1
+        while end < len(items):
+            current = items[end]
+            stripped = current.strip()
+            if stripped and not current.startswith((" ", "\t")):
+                break
+            end += 1
+        return index, end
+    return None
+
+
+def has_quic_acl_rule(items):
+    rule_re = re.compile(r"reject\s*\(\s*all\s*,\s*udp/443\s*\)", re.IGNORECASE)
+    for line in items:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if rule_re.search(stripped):
+            return True
+    return False
+
+
+def ensure_udp_redundancy(items):
+    existing = top_level_key_range(items, "udpForwardingRedundancy")
+    if existing:
+        start, end = existing
+        return items[:start] + udp_block + items[end:]
+
+    insert_at = None
+    for key in ("disableUDP", "ignoreClientBandwidth"):
+        anchor = top_level_key_range(items, key)
+        if anchor:
+            insert_at = anchor[1]
+            break
+
+    if insert_at is None:
+        spacer = [""] if items and items[0].strip() else []
+        return udp_block + spacer + items
+    return items[:insert_at] + udp_block + items[insert_at:]
+
+
+def ensure_quic_acl(items):
+    if has_quic_acl_rule(items):
+        return items
+
+    existing = top_level_key_range(items, "acl")
+    if not existing:
+        updated = items[:]
+        if updated and updated[-1].strip():
+            updated.append("")
+        updated.extend(acl_block)
+        return updated
+
+    start, end = existing
+    inline_re = re.compile(r"^([ \t]*)inline\s*:")
+    inline_index = None
+    inline_match = None
+    for index in range(start + 1, end):
+        inline_match = inline_re.match(items[index])
+        if inline_match:
+            inline_index = index
+            break
+
+    if inline_index is None:
+        return items[:start + 1] + ["  inline:", f"    - {acl_rule}"] + items[start + 1:]
+
+    prefix = inline_match.group(1)
+    inline_text = items[inline_index].strip()
+    rule_line = f"{prefix}  - {acl_rule}"
+
+    if re.match(r"inline\s*:\s*\[\s*\]\s*(#.*)?$", inline_text):
+        return items[:inline_index] + [f"{prefix}inline:", rule_line] + items[inline_index + 1:]
+
+    if not re.match(r"inline\s*:\s*(#.*)?$", inline_text):
+        raise SystemExit("unsupported acl.inline format; please use block-style inline ACL")
+
+    return items[:inline_index + 1] + [rule_line] + items[inline_index + 1:]
+
+
+lines = ensure_udp_redundancy(lines)
+lines = ensure_quic_acl(lines)
+path.write_text("\n".join(lines) + "\n")
+PY
+    then
+        echo -e "${red}failed to update ${hy2_config}${plain}"
+        [[ $# == 0 ]] && before_show_menu
+        return 1
+    fi
+
+    echo -e "${green}updated ${hy2_config} Hysteria YAML defaults and QUIC ACL${plain}"
+    restart 0
+    [[ $# == 0 ]] && before_show_menu
+}
+
 show_usage() {
     echo "BXtest 管理脚本使用方法: "
     echo "------------------------------------------"
@@ -2451,6 +2590,7 @@ show_usage() {
     echo "BXtest generate     - 生成 BXtest 配置文件"
     echo "BXtest smartdns [AI_DNS] - 安装 smartdns，可选启用 AI 分流"
     echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用"
+    echo "BXtest hy2yaml      - 更新 Hysteria YAML 默认值并阻止 QUIC"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 到指定版本"
     echo "BXtest install      - 安装 BXtest"
@@ -2485,11 +2625,12 @@ show_menu() {
   ${green}15.${plain} 生成 BXtest 配置文件
   ${green}16.${plain} 放行 VPS 的所有网络端口
   ${green}17.${plain} 安装 smartdns 并可选启用 AI DNS 分流
-  ${green}18.${plain} 退出脚本
+  ${green}18.${plain} 更新 Hysteria YAML 默认值并阻止 QUIC
+  ${green}19.${plain} 退出脚本
  "
  #后续更新可加入上方字符串中
     show_status
-    echo && read -rp "请输入选择 [0-18]: " num
+    echo && read -rp "请输入选择 [0-19]: " num
 
     case "${num}" in
         0) config ;;
@@ -2510,8 +2651,9 @@ show_menu() {
         15) generate_config_file ;;
         16) open_ports ;;
         17) install_smartdns ;;
-        18) exit ;;
-        *) echo -e "${red}请输入正确的数字 [0-18]${plain}" ;;
+        18) check_install && update_hysteria_yaml_defaults ;;
+        19) exit ;;
+        *) echo -e "${red}请输入正确的数字 [0-19]${plain}" ;;
     esac
 }
 
@@ -2529,6 +2671,7 @@ if [[ $# > 0 ]]; then
         "config") config $* ;;
         "generate") generate_config_file ;;
         "smartdns") install_smartdns 0 "$2" ;;
+        "hy2yaml") check_install 0 && update_hysteria_yaml_defaults 0 ;;
         "install") check_uninstall 0 && install_BXtest 0 ;;
         "uninstall") check_install 0 && uninstall 0 ;;
         "x25519") check_install 0 && generate_x25519_key 0 ;;
