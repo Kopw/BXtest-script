@@ -902,11 +902,8 @@ install_smartdns_package() {
             yum install -y smartdns >/dev/null 2>&1 && return 0
             ;;
         "alpine")
-            apk update >/dev/null 2>&1
-            if apk add smartdns >/dev/null 2>&1; then
-                write_smartdns_alpine_service "$(command -v smartdns)" || return 1
-                return 0
-            fi
+            install_smartdns_alpine_binary
+            return $?
             ;;
         "arch")
             pacman -Sy --noconfirm >/dev/null 2>&1
@@ -951,35 +948,6 @@ start_pre() {
 EOF
     chmod +x /etc/init.d/smartdns
     rc-update add smartdns default >/dev/null 2>&1
-}
-
-install_smartdns_alpine_from_release() {
-    local tmp_dir="$1"
-
-    if [[ ! -f "${tmp_dir}/smartdns/usr/sbin/smartdns" ]]; then
-        echo -e "${red}smartdns 安装包缺少 Alpine 可用的二进制文件${plain}"
-        return 1
-    fi
-
-    mkdir -p /usr/sbin /etc/init.d /etc/smartdns /etc/default /usr/share/smartdns /usr/local/lib/smartdns
-    cp -a "${tmp_dir}/smartdns/usr/sbin/smartdns" /usr/sbin/smartdns
-    chmod +x /usr/sbin/smartdns
-
-    if [[ -d "${tmp_dir}/smartdns/usr/share/smartdns" ]]; then
-        cp -a "${tmp_dir}/smartdns/usr/share/smartdns/." /usr/share/smartdns/ 2>/dev/null
-    fi
-    if [[ -d "${tmp_dir}/smartdns/usr/local/lib/smartdns" ]]; then
-        cp -a "${tmp_dir}/smartdns/usr/local/lib/smartdns/." /usr/local/lib/smartdns/ 2>/dev/null
-    fi
-    if [[ -f "${tmp_dir}/smartdns/etc/default/smartdns" ]]; then
-        cp -a "${tmp_dir}/smartdns/etc/default/smartdns" /etc/default/smartdns
-    else
-        cat <<'EOF' > /etc/default/smartdns
-SMARTDNS_OPTS=""
-EOF
-    fi
-
-    write_smartdns_alpine_service "/usr/sbin/smartdns"
 }
 
 install_smartdns_from_release() {
@@ -1027,17 +995,6 @@ install_smartdns_from_release() {
         return 1
     fi
 
-    if [[ x"${release}" == x"alpine" ]]; then
-        install_smartdns_alpine_from_release "$tmp_dir"
-        install_result=$?
-        rm -rf "$tmp_dir"
-        if [[ $install_result -ne 0 ]]; then
-            echo -e "${red}smartdns Alpine 手动安装失败${plain}"
-            return 1
-        fi
-        return 0
-    fi
-
     if [[ ! -x "${tmp_dir}/smartdns/install" ]]; then
         rm -rf "$tmp_dir"
         echo -e "${red}smartdns 安装包缺少 install 脚本${plain}"
@@ -1053,6 +1010,55 @@ install_smartdns_from_release() {
     fi
 
     return 0
+}
+
+install_smartdns_alpine_binary() {
+    local arch smartdns_arch api_url release_json download_url tmp_path
+
+    echo -e "${yellow}Alpine 系统直接下载 smartdns 二进制文件安装...${plain}"
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) smartdns_arch="x86_64" ;;
+        i386|i686) smartdns_arch="x86" ;;
+        aarch64|arm64) smartdns_arch="aarch64" ;;
+        armv7l|armv6l|arm) smartdns_arch="arm" ;;
+        mips) smartdns_arch="mips" ;;
+        mipsel) smartdns_arch="mipsel" ;;
+        *)
+            echo -e "${red}暂不支持当前架构安装 smartdns: ${arch}${plain}"
+            return 1
+            ;;
+    esac
+
+    api_url="https://api.github.com/repos/pymumu/smartdns/releases/latest"
+    release_json=$(curl -fsSL "$api_url" 2>/dev/null)
+    if [[ -z "$release_json" ]]; then
+        echo -e "${red}获取 smartdns 最新 release 信息失败${plain}"
+        return 1
+    fi
+
+    download_url=$(echo "$release_json" | grep -oE "https://[^\"]*/smartdns-${smartdns_arch}" | head -n 1)
+    if [[ -z "$download_url" ]]; then
+        echo -e "${red}未找到当前架构的 smartdns 二进制文件: smartdns-${smartdns_arch}${plain}"
+        return 1
+    fi
+
+    mkdir -p /usr/sbin /etc/smartdns /etc/default
+    tmp_path=$(mktemp /tmp/smartdns-bin.XXXXXX)
+    if ! curl -fL "$download_url" -o "$tmp_path"; then
+        rm -f "$tmp_path"
+        echo -e "${red}下载 smartdns 二进制文件失败${plain}"
+        return 1
+    fi
+    install -m 0755 "$tmp_path" /usr/sbin/smartdns
+    local install_result=$?
+    rm -f "$tmp_path"
+    if [[ $install_result -ne 0 ]]; then
+        echo -e "${red}安装 smartdns 二进制文件失败${plain}"
+        return 1
+    fi
+
+    write_smartdns_alpine_service "/usr/sbin/smartdns"
 }
 
 normalize_ai_dns_server() {
