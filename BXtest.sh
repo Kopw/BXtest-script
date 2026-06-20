@@ -885,6 +885,9 @@ show_log() {
 
 install_smartdns_package() {
     if command -v smartdns >/dev/null 2>&1; then
+        if [[ x"${release}" == x"alpine" ]]; then
+            write_smartdns_alpine_service "$(command -v smartdns)" || return 1
+        fi
         echo -e "${green}检测到 smartdns 已安装，跳过安装步骤${plain}"
         return 0
     fi
@@ -900,7 +903,10 @@ install_smartdns_package() {
             ;;
         "alpine")
             apk update >/dev/null 2>&1
-            apk add smartdns >/dev/null 2>&1 && return 0
+            if apk add smartdns >/dev/null 2>&1; then
+                write_smartdns_alpine_service "$(command -v smartdns)" || return 1
+                return 0
+            fi
             ;;
         "arch")
             pacman -Sy --noconfirm >/dev/null 2>&1
@@ -908,8 +914,78 @@ install_smartdns_package() {
             ;;
     esac
 
+    install_smartdns_from_release
+}
+
+write_smartdns_alpine_service() {
+    local smartdns_bin="$1"
+    [[ -z "$smartdns_bin" ]] && smartdns_bin="/usr/sbin/smartdns"
+
+    mkdir -p /etc/init.d /etc/default
+    if [[ ! -f /etc/default/smartdns ]]; then
+        cat <<'EOF' > /etc/default/smartdns
+SMARTDNS_OPTS=""
+EOF
+    fi
+
+    cat > /etc/init.d/smartdns <<EOF
+#!/sbin/openrc-run
+
+name="smartdns"
+description="SmartDNS local DNS server"
+
+command="${smartdns_bin}"
+command_args="-f -c /etc/smartdns/smartdns.conf \${SMARTDNS_OPTS}"
+command_background="yes"
+pidfile="/run/smartdns.pid"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    [ -f /etc/default/smartdns ] && . /etc/default/smartdns
+    checkpath --directory --mode 0755 /run
+}
+EOF
+    chmod +x /etc/init.d/smartdns
+    rc-update add smartdns default >/dev/null 2>&1
+}
+
+install_smartdns_alpine_from_release() {
+    local tmp_dir="$1"
+
+    if [[ ! -f "${tmp_dir}/smartdns/usr/sbin/smartdns" ]]; then
+        echo -e "${red}smartdns 安装包缺少 Alpine 可用的二进制文件${plain}"
+        return 1
+    fi
+
+    mkdir -p /usr/sbin /etc/init.d /etc/smartdns /etc/default /usr/share/smartdns /usr/local/lib/smartdns
+    cp -a "${tmp_dir}/smartdns/usr/sbin/smartdns" /usr/sbin/smartdns
+    chmod +x /usr/sbin/smartdns
+
+    if [[ -d "${tmp_dir}/smartdns/usr/share/smartdns" ]]; then
+        cp -a "${tmp_dir}/smartdns/usr/share/smartdns/." /usr/share/smartdns/ 2>/dev/null
+    fi
+    if [[ -d "${tmp_dir}/smartdns/usr/local/lib/smartdns" ]]; then
+        cp -a "${tmp_dir}/smartdns/usr/local/lib/smartdns/." /usr/local/lib/smartdns/ 2>/dev/null
+    fi
+    if [[ -f "${tmp_dir}/smartdns/etc/default/smartdns" ]]; then
+        cp -a "${tmp_dir}/smartdns/etc/default/smartdns" /etc/default/smartdns
+    else
+        cat <<'EOF' > /etc/default/smartdns
+SMARTDNS_OPTS=""
+EOF
+    fi
+
+    write_smartdns_alpine_service "/usr/sbin/smartdns"
+}
+
+install_smartdns_from_release() {
+    local arch smartdns_arch api_url release_json download_url tmp_dir pkg_path install_result
+
     echo -e "${yellow}系统软件源未能安装 smartdns，尝试从官方 release 安装...${plain}"
-    local arch smartdns_arch api_url release_json download_url tmp_dir pkg_path
     arch=$(uname -m)
     case "$arch" in
         x86_64|amd64) smartdns_arch="x86_64" ;;
@@ -951,6 +1027,17 @@ install_smartdns_package() {
         return 1
     fi
 
+    if [[ x"${release}" == x"alpine" ]]; then
+        install_smartdns_alpine_from_release "$tmp_dir"
+        install_result=$?
+        rm -rf "$tmp_dir"
+        if [[ $install_result -ne 0 ]]; then
+            echo -e "${red}smartdns Alpine 手动安装失败${plain}"
+            return 1
+        fi
+        return 0
+    fi
+
     if [[ ! -x "${tmp_dir}/smartdns/install" ]]; then
         rm -rf "$tmp_dir"
         echo -e "${red}smartdns 安装包缺少 install 脚本${plain}"
@@ -958,7 +1045,7 @@ install_smartdns_package() {
     fi
 
     (cd "${tmp_dir}/smartdns" && sh ./install -i >/dev/null 2>&1)
-    local install_result=$?
+    install_result=$?
     rm -rf "$tmp_dir"
     if [[ $install_result -ne 0 ]]; then
         echo -e "${red}smartdns 官方安装脚本执行失败${plain}"
@@ -1347,7 +1434,10 @@ PY
 restart_smartdns_service() {
     if [[ x"${release}" == x"alpine" ]]; then
         rc-update add smartdns default >/dev/null 2>&1
-        rc-service smartdns restart >/dev/null 2>&1 || service smartdns restart >/dev/null 2>&1
+        rc-service smartdns restart >/dev/null 2>&1 || service smartdns restart >/dev/null 2>&1 || {
+            rc-service smartdns stop >/dev/null 2>&1 || service smartdns stop >/dev/null 2>&1
+            rc-service smartdns start >/dev/null 2>&1 || service smartdns start >/dev/null 2>&1
+        }
         sleep 1
         rc-service smartdns status >/dev/null 2>&1 || service smartdns status >/dev/null 2>&1
         return $?
