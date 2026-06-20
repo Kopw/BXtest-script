@@ -904,7 +904,7 @@ ignoreClientBandwidth: false
 disableUDP: false
 udpForwardingRedundancy:
   enabled: true
-  writeToMultiplier: 4
+  writeToMultiplier: 1
   sendMessageMultiplier: 8
 acl:
   inline:

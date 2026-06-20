@@ -2399,7 +2399,7 @@ ignoreClientBandwidth: false
 disableUDP: false
 udpForwardingRedundancy:
   enabled: true
-  writeToMultiplier: 4
+  writeToMultiplier: 1
   sendMessageMultiplier: 8
 acl:
   inline:
@@ -2465,7 +2465,7 @@ lines = path.read_text().splitlines()
 udp_block = [
     "udpForwardingRedundancy:",
     "  enabled: true",
-    "  writeToMultiplier: 4",
+    "  writeToMultiplier: 1",
     "  sendMessageMultiplier: 8",
 ]
 acl_rule = "reject(all, udp/443)"
