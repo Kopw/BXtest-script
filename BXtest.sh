@@ -625,6 +625,13 @@ update() {
         version="$BXTEST_RESOLVED_VERSION"
     fi
 
+    if ! command -v unzip >/dev/null 2>&1; then
+        echo -e "${red}未安装 unzip，无法解压 BXtest 更新包，请先安装 unzip 后重试${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
     local tmp_dir
     tmp_dir=$(mktemp -d /tmp/bxtest-update.XXXXXX)
     local zip_path="${tmp_dir}/BXtest-linux.zip"
@@ -638,27 +645,37 @@ update() {
         return 1
     fi
 
-    unzip -o "$zip_path" -d "$tmp_dir" >/dev/null 2>&1
-    if [[ $? -ne 0 || ! -f "${tmp_dir}/BXtest" ]]; then
+    local binary_tmp="/usr/local/BXtest/BXtest.tmp.$$"
+    if ! unzip -p "$zip_path" BXtest > "$binary_tmp"; then
+        rm -f "$binary_tmp"
         rm -rf "$tmp_dir"
-        echo -e "${red}解压 BXtest ${version} 失败，未找到 BXtest 可执行文件${plain}"
+        echo -e "${red}解压 BXtest ${version} 失败，无法从更新包中提取 BXtest 可执行文件${plain}"
         if [[ $# == 0 ]]; then
             before_show_menu
         fi
         return 1
     fi
 
-    local binary_tmp="/usr/local/BXtest/BXtest.tmp.$$"
-    cp "${tmp_dir}/BXtest" "$binary_tmp"
-    if [[ $? -ne 0 ]]; then
+    if [[ ! -s "$binary_tmp" ]]; then
+        rm -f "$binary_tmp"
         rm -rf "$tmp_dir"
-        echo -e "${red}替换 BXtest 程序失败${plain}"
+        echo -e "${red}解压 BXtest ${version} 失败，提取到的 BXtest 文件为空${plain}"
         if [[ $# == 0 ]]; then
             before_show_menu
         fi
         return 1
     fi
-    chmod +x "$binary_tmp"
+
+    if ! chmod +x "$binary_tmp"; then
+        rm -f "$binary_tmp"
+        rm -rf "$tmp_dir"
+        echo -e "${red}设置 BXtest 程序权限失败${plain}"
+        if [[ $# == 0 ]]; then
+            before_show_menu
+        fi
+        return 1
+    fi
+
     mv -f "$binary_tmp" /usr/local/BXtest/BXtest
     if [[ $? -ne 0 ]]; then
         rm -f "$binary_tmp"
