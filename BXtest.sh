@@ -1144,7 +1144,7 @@ install_smartdns_alpine_binary() {
         echo -e "${red}下载 smartdns 二进制文件失败${plain}"
         return 1
     fi
-    install -m 0755 "$tmp_path" /usr/sbin/smartdns
+    cp "$tmp_path" /usr/sbin/smartdns && chmod 0755 /usr/sbin/smartdns
     local install_result=$?
     rm -f "$tmp_path"
     if [[ $install_result -ne 0 ]]; then
@@ -1370,7 +1370,7 @@ then
     exit 1
 fi
 
-install -m 0644 "$TMP_OUTPUT" "$AI_DOMAIN_FILE"
+cp "$TMP_OUTPUT" "$AI_DOMAIN_FILE" && chmod 0644 "$AI_DOMAIN_FILE"
 exit $?
 EOF
     chmod +x "$update_script"
