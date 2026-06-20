@@ -1130,7 +1130,7 @@ install_smartdns_alpine_binary() {
         return 1
     fi
 
-    download_url=$(echo "$release_json" | grep -oE "https://[^\"]*/smartdns-${smartdns_arch}" | head -n 1)
+    download_url=$(echo "$release_json" | grep '"browser_download_url"' | grep "/smartdns-${smartdns_arch}\"" | sed -E 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' | head -n 1)
     if [[ -z "$download_url" ]]; then
         echo -e "${red}未找到当前架构的 smartdns 二进制文件: smartdns-${smartdns_arch}${plain}"
         return 1
@@ -1138,6 +1138,7 @@ install_smartdns_alpine_binary() {
 
     mkdir -p /usr/sbin /etc/smartdns /etc/default
     tmp_path=$(mktemp /tmp/smartdns-bin.XXXXXX)
+    echo -e "${yellow}下载 smartdns 二进制文件: ${download_url}${plain}"
     if ! curl -fL "$download_url" -o "$tmp_path"; then
         rm -f "$tmp_path"
         echo -e "${red}下载 smartdns 二进制文件失败${plain}"
@@ -1148,6 +1149,18 @@ install_smartdns_alpine_binary() {
     rm -f "$tmp_path"
     if [[ $install_result -ne 0 ]]; then
         echo -e "${red}安装 smartdns 二进制文件失败${plain}"
+        return 1
+    fi
+    if [[ ! -x /usr/sbin/smartdns ]]; then
+        echo -e "${red}/usr/sbin/smartdns 未安装成功或不可执行${plain}"
+        ls -l /usr/sbin/smartdns 2>/dev/null || true
+        return 1
+    fi
+    if ! /usr/sbin/smartdns -v >/dev/null 2>&1; then
+        echo -e "${red}/usr/sbin/smartdns 无法执行，可能下载到了错误文件或系统架构不匹配${plain}"
+        ls -l /usr/sbin/smartdns 2>/dev/null || true
+        file /usr/sbin/smartdns 2>/dev/null || true
+        /usr/sbin/smartdns -v 2>&1 | head -n 5 || true
         return 1
     fi
 
@@ -1667,8 +1680,9 @@ show_smartdns_failure_diagnostics() {
 }
 
 install_smartdns() {
-    check_install "$@"
-    if [[ $? != 0 ]]; then
+    if [[ ! -d /etc/BXtest ]]; then
+        echo -e "${red}请先安装 BXtest，再使用 smartdns 配置功能${plain}"
+        [[ $# == 0 ]] && before_show_menu
         return 1
     fi
 
@@ -1695,7 +1709,11 @@ install_smartdns() {
                 ;;
             "alpine")
                 apk update >/dev/null 2>&1
-                apk add curl python3 ca-certificates >/dev/null 2>&1
+                if ! apk add curl python3 ca-certificates >/dev/null 2>&1; then
+                    echo -e "${red}安装 curl/python3/ca-certificates 失败，无法继续安装 smartdns${plain}"
+                    [[ $# == 0 ]] && before_show_menu
+                    return 1
+                fi
                 update-ca-certificates >/dev/null 2>&1
                 ;;
             "arch")
@@ -1755,7 +1773,7 @@ install_smartdns() {
     else
         echo -e "${green}未启用 AI DNS 分流，所有域名使用 SmartDNS 默认上游${plain}"
     fi
-    confirm_restart "$@"
+    [[ $# == 0 ]] && before_show_menu
 }
 
 install_bbr() {
