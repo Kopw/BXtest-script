@@ -584,7 +584,7 @@ before_show_menu() {
     show_menu
 }
 
-install() {
+install_BXtest() {
     bash <(curl -Ls https://raw.githubusercontent.com/Kopw/BXtest-script/master/install.sh)
     if [[ $? == 0 ]]; then
         if [[ $# == 0 ]]; then
@@ -1144,7 +1144,7 @@ install_smartdns_alpine_binary() {
         echo -e "${red}下载 smartdns 二进制文件失败${plain}"
         return 1
     fi
-    cp "$tmp_path" /usr/sbin/smartdns && chmod 0755 /usr/sbin/smartdns
+    command cp "$tmp_path" /usr/sbin/smartdns && command chmod 0755 /usr/sbin/smartdns
     local install_result=$?
     rm -f "$tmp_path"
     if [[ $install_result -ne 0 ]]; then
@@ -1370,7 +1370,7 @@ then
     exit 1
 fi
 
-cp "$TMP_OUTPUT" "$AI_DOMAIN_FILE" && chmod 0644 "$AI_DOMAIN_FILE"
+command cp "$TMP_OUTPUT" "$AI_DOMAIN_FILE" && command chmod 0644 "$AI_DOMAIN_FILE"
 exit $?
 EOF
     chmod +x "$update_script"
@@ -2489,7 +2489,7 @@ show_menu() {
 
     case "${num}" in
         0) config ;;
-        1) check_uninstall && install ;;
+        1) check_uninstall && install_BXtest ;;
         2) check_install && update ;;
         3) check_install && uninstall ;;
         4) check_install && start ;;
@@ -2525,7 +2525,7 @@ if [[ $# > 0 ]]; then
         "config") config $* ;;
         "generate") generate_config_file ;;
         "smartdns") install_smartdns 0 "$2" ;;
-        "install") check_uninstall 0 && install 0 ;;
+        "install") check_uninstall 0 && install_BXtest 0 ;;
         "uninstall") check_install 0 && uninstall 0 ;;
         "x25519") check_install 0 && generate_x25519_key 0 ;;
         "version") check_install 0 && show_BXtest_version 0 ;;
