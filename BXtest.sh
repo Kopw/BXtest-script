@@ -921,7 +921,7 @@ write_smartdns_alpine_service() {
     mkdir -p /etc/init.d /etc/default
     if [[ ! -f /etc/default/smartdns ]]; then
         cat <<'EOF' > /etc/default/smartdns
-SMARTDNS_OPTS=""
+SMART_DNS_OPTS=""
 EOF
     fi
 
@@ -931,10 +931,13 @@ EOF
 name="smartdns"
 description="SmartDNS local DNS server"
 
+[ -f /etc/default/smartdns ] && . /etc/default/smartdns
+: \${SMART_DNS_OPTS:=\${SMARTDNS_OPTS:-}}
+
 command="${smartdns_bin}"
-command_args="-f -c /etc/smartdns/smartdns.conf \${SMARTDNS_OPTS}"
-command_background="yes"
 pidfile="/run/smartdns.pid"
+command_args="-p \${pidfile} -c /etc/smartdns/smartdns.conf \${SMART_DNS_OPTS}"
+retry="TERM/15/KILL/5"
 
 depend() {
     need net
@@ -942,8 +945,11 @@ depend() {
 }
 
 start_pre() {
-    [ -f /etc/default/smartdns ] && . /etc/default/smartdns
     checkpath --directory --mode 0755 /run
+    checkpath --directory --mode 0755 /etc/smartdns
+    checkpath --directory --mode 0755 /var/cache/smartdns
+    checkpath --directory --mode 0755 /var/log/smartdns
+    rm -f "\${pidfile}"
 }
 EOF
     chmod +x /etc/init.d/smartdns
@@ -1534,6 +1540,27 @@ restart_smartdns_service() {
     systemctl is-active --quiet smartdns
 }
 
+show_smartdns_failure_diagnostics() {
+    echo -e "${yellow}smartdns 启动失败诊断信息:${plain}"
+    if command -v smartdns >/dev/null 2>&1; then
+        echo -e "${yellow}smartdns 版本:${plain}"
+        smartdns -v 2>&1 | head -n 3 || true
+        echo -e "${yellow}前台启动检查:${plain}"
+        timeout 3 smartdns -f -p - -c /etc/smartdns/smartdns.conf 2>&1 | tail -n 20 || true
+    fi
+    if [[ -f /var/log/smartdns/smartdns.log ]]; then
+        echo -e "${yellow}/var/log/smartdns/smartdns.log 最近日志:${plain}"
+        tail -n 30 /var/log/smartdns/smartdns.log || true
+    fi
+    if command -v ss >/dev/null 2>&1; then
+        echo -e "${yellow}53 端口占用:${plain}"
+        ss -lntup 2>/dev/null | grep -E '(:53[[:space:]]|:53$)' || true
+    elif command -v netstat >/dev/null 2>&1; then
+        echo -e "${yellow}53 端口占用:${plain}"
+        netstat -lntup 2>/dev/null | grep -E '(:53[[:space:]]|:53$)' || true
+    fi
+}
+
 install_smartdns() {
     check_install "$@"
     if [[ $? != 0 ]]; then
@@ -1607,6 +1634,7 @@ install_smartdns() {
 
     if ! restart_smartdns_service; then
         echo -e "${red}smartdns 启动失败，请检查 127.0.0.1:53 是否被 systemd-resolved 或其他 DNS 服务占用${plain}"
+        show_smartdns_failure_diagnostics
         if [[ x"${release}" != x"alpine" ]]; then
             echo -e "${yellow}可使用 journalctl -u smartdns -e --no-pager 查看 smartdns 日志${plain}"
         fi
