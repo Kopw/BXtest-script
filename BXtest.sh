@@ -884,8 +884,24 @@ show_log() {
 }
 
 install_smartdns_package() {
+    if [[ x"${release}" == x"alpine" ]] && [[ -x /usr/sbin/smartdns ]]; then
+        if ! /usr/sbin/smartdns -v >/dev/null 2>&1; then
+            echo -e "${yellow}检测到现有 smartdns 无法执行，重新下载 Alpine 二进制文件...${plain}"
+            install_smartdns_alpine_binary
+            return $?
+        fi
+        write_smartdns_alpine_service "/usr/sbin/smartdns" || return 1
+        echo -e "${green}检测到 smartdns 已安装，跳过安装步骤${plain}"
+        return 0
+    fi
+
     if command -v smartdns >/dev/null 2>&1; then
         if [[ x"${release}" == x"alpine" ]]; then
+            if ! smartdns -v >/dev/null 2>&1; then
+                echo -e "${yellow}检测到现有 smartdns 无法执行，重新下载 Alpine 二进制文件...${plain}"
+                install_smartdns_alpine_binary
+                return $?
+            fi
             write_smartdns_alpine_service "$(command -v smartdns)" || return 1
         fi
         echo -e "${green}检测到 smartdns 已安装，跳过安装步骤${plain}"
@@ -930,26 +946,97 @@ EOF
 
 name="smartdns"
 description="SmartDNS local DNS server"
-
-[ -f /etc/default/smartdns ] && . /etc/default/smartdns
-: \${SMART_DNS_OPTS:=\${SMARTDNS_OPTS:-}}
-
 command="${smartdns_bin}"
 pidfile="/run/smartdns.pid"
-command_args="-p \${pidfile} -c /etc/smartdns/smartdns.conf \${SMART_DNS_OPTS}"
-retry="TERM/15/KILL/5"
+config="/etc/smartdns/smartdns.conf"
 
 depend() {
     need net
     after firewall
 }
 
-start_pre() {
+load_opts() {
+    [ -f /etc/default/smartdns ] && . /etc/default/smartdns
+    SMART_DNS_OPTS=\${SMART_DNS_OPTS:-\${SMARTDNS_OPTS:-}}
+}
+
+checkconfig() {
+    if [ ! -x "\${command}" ]; then
+        eerror "smartdns binary not found or not executable: \${command}"
+        return 1
+    fi
+    if [ ! -r "\${config}" ]; then
+        eerror "smartdns config not found or not readable: \${config}"
+        return 1
+    fi
     checkpath --directory --mode 0755 /run
     checkpath --directory --mode 0755 /etc/smartdns
     checkpath --directory --mode 0755 /var/cache/smartdns
     checkpath --directory --mode 0755 /var/log/smartdns
+}
+
+start() {
+    load_opts
+    checkconfig || return 1
+    ebegin "Starting smartdns"
     rm -f "\${pidfile}"
+    \${command} -p "\${pidfile}" -c "\${config}" \${SMART_DNS_OPTS}
+    ret=\$?
+    if [ \$ret -eq 0 ]; then
+        i=0
+        while [ \$i -lt 20 ]; do
+            if [ -s "\${pidfile}" ]; then
+                pid="\$(cat "\${pidfile}" 2>/dev/null)"
+                if [ -n "\${pid}" ] && kill -0 "\${pid}" 2>/dev/null; then
+                    eend 0
+                    return 0
+                fi
+            fi
+            sleep .5
+            i=\$((i + 1))
+        done
+        ret=1
+    fi
+    eend \$ret
+    return \$ret
+}
+
+stop() {
+    ebegin "Stopping smartdns"
+    if [ ! -f "\${pidfile}" ]; then
+        eend 0
+        return 0
+    fi
+    pid="\$(cat "\${pidfile}" 2>/dev/null)"
+    if [ -z "\${pid}" ] || ! kill -0 "\${pid}" 2>/dev/null; then
+        rm -f "\${pidfile}"
+        eend 0
+        return 0
+    fi
+    kill -TERM "\${pid}" 2>/dev/null
+    ret=\$?
+    i=0
+    while [ \$i -lt 30 ]; do
+        kill -0 "\${pid}" 2>/dev/null || break
+        sleep .5
+        i=\$((i + 1))
+    done
+    if kill -0 "\${pid}" 2>/dev/null; then
+        kill -KILL "\${pid}" 2>/dev/null
+    fi
+    rm -f "\${pidfile}"
+    eend \$ret
+    return \$ret
+}
+
+status() {
+    pid="\$(cat "\${pidfile}" 2>/dev/null)"
+    if [ -n "\${pid}" ] && kill -0 "\${pid}" 2>/dev/null; then
+        echo "smartdns is running (pid \${pid})"
+        return 0
+    fi
+    echo "smartdns is stopped"
+    return 1
 }
 EOF
     chmod +x /etc/init.d/smartdns
@@ -1524,12 +1611,12 @@ PY
 restart_smartdns_service() {
     if [[ x"${release}" == x"alpine" ]]; then
         rc-update add smartdns default >/dev/null 2>&1
-        rc-service smartdns restart >/dev/null 2>&1 || service smartdns restart >/dev/null 2>&1 || {
-            rc-service smartdns stop >/dev/null 2>&1 || service smartdns stop >/dev/null 2>&1
-            rc-service smartdns start >/dev/null 2>&1 || service smartdns start >/dev/null 2>&1
+        rc-service smartdns restart || service smartdns restart || {
+            rc-service smartdns stop || service smartdns stop
+            rc-service smartdns start || service smartdns start
         }
         sleep 1
-        rc-service smartdns status >/dev/null 2>&1 || service smartdns status >/dev/null 2>&1
+        rc-service smartdns status || service smartdns status
         return $?
     fi
 
@@ -1541,12 +1628,30 @@ restart_smartdns_service() {
 }
 
 show_smartdns_failure_diagnostics() {
+    local smartdns_bin=""
     echo -e "${yellow}smartdns 启动失败诊断信息:${plain}"
     if command -v smartdns >/dev/null 2>&1; then
+        smartdns_bin="$(command -v smartdns)"
+    elif [[ -x /usr/sbin/smartdns ]]; then
+        smartdns_bin="/usr/sbin/smartdns"
+    elif [[ -x /usr/local/bin/smartdns ]]; then
+        smartdns_bin="/usr/local/bin/smartdns"
+    elif [[ -x /usr/local/sbin/smartdns ]]; then
+        smartdns_bin="/usr/local/sbin/smartdns"
+    fi
+    echo -e "${yellow}smartdns 二进制文件:${plain}"
+    ls -l /usr/sbin/smartdns /usr/local/bin/smartdns /usr/local/sbin/smartdns 2>/dev/null || true
+    if [[ -n "$smartdns_bin" ]]; then
         echo -e "${yellow}smartdns 版本:${plain}"
-        smartdns -v 2>&1 | head -n 3 || true
+        "$smartdns_bin" -v 2>&1 | head -n 3 || true
         echo -e "${yellow}前台启动检查:${plain}"
-        timeout 3 smartdns -f -p - -c /etc/smartdns/smartdns.conf 2>&1 | tail -n 20 || true
+        timeout 3 "$smartdns_bin" -f -p - -c /etc/smartdns/smartdns.conf 2>&1 | tail -n 20 || true
+    else
+        echo -e "${red}未找到可执行的 smartdns 二进制文件${plain}"
+    fi
+    if [[ -f /etc/init.d/smartdns ]]; then
+        echo -e "${yellow}/etc/init.d/smartdns 状态:${plain}"
+        ls -l /etc/init.d/smartdns || true
     fi
     if [[ -f /var/log/smartdns/smartdns.log ]]; then
         echo -e "${yellow}/var/log/smartdns/smartdns.log 最近日志:${plain}"
