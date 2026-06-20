@@ -2397,6 +2397,10 @@ EOF
     cat <<EOF > /etc/BXtest/hy2config.yaml
 ignoreClientBandwidth: false
 disableUDP: false
+udpForwardingRedundancy:
+  enabled: false
+  writeToMultiplier: 1
+  sendMessageMultiplier: 1
 congestion:
   type: bbr
   bbrProfile: aggressive
