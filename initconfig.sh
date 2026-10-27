@@ -905,7 +905,9 @@ disableUDP: false
 udpForwardingRedundancy:
   enabled: true
   writeToMultiplier: 1
-  sendMessageMultiplier: 8
+  sendMessageMultiplier: 2
+  # 只发 1 份的远端端口：DNS、NTP、QUIC、DoQ、STUN/TURN、mDNS
+  excludePorts: "53,123,443,853,3478-3481,5353"
 acl:
   inline:
     - reject(all, udp/443)
