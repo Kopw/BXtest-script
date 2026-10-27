@@ -852,8 +852,8 @@ EOF
   "dns": {
     "servers": [
       {
-        "tag": "cf",
-        "address": "local"
+        "type": "local",
+        "tag": "cf"
       }
     ],
     "strategy": "ipv4_only"

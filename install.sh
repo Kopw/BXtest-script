@@ -259,6 +259,54 @@ check_status() {
     fi
 }
 
+# sing-box 1.14 起不再支持旧版 DNS 服务器写法（address），启动前把 sing_origin.json 迁移到新写法（sing-box 1.12+ 均兼容）
+migrate_sing_origin_dns() {
+    local path="/etc/BXtest/sing_origin.json"
+    [[ -f "$path" ]] || return 0
+    grep -q '"address"' "$path" || return 0
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${yellow}未找到 python3，无法自动迁移 ${path} 中的旧版 DNS 写法，新版 BXtest 可能无法启动，请手动修改${plain}"
+        return 0
+    fi
+    cp -a "$path" "${path}.bak.$(date +%Y%m%d%H%M%S)"
+    if ! python3 - "$path" <<'PY'
+import json
+import sys
+from urllib.parse import urlsplit
+
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+changed = False
+for server in data.get("dns", {}).get("servers", []):
+    if not isinstance(server, dict) or "address" not in server:
+        continue
+    address = server.pop("address")
+    if address == "local":
+        server["type"] = "local"
+    else:
+        url = urlsplit(address if "://" in address else "udp://" + address)
+        if url.scheme not in ("udp", "tcp", "tls", "https", "quic", "h3"):
+            raise SystemExit("unsupported DNS address: " + address)
+        server["type"] = url.scheme
+        server["server"] = url.hostname
+        if url.port:
+            server["server_port"] = url.port
+        if url.scheme == "https" and url.path not in ("", "/dns-query"):
+            server["path"] = url.path
+    changed = True
+if changed:
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+PY
+    then
+        echo -e "${red}迁移 ${path} 中的旧版 DNS 写法失败，请手动修改${plain}"
+        return 1
+    fi
+    echo -e "${green}已将 ${path} 中的 DNS 服务器迁移到新版写法${plain}"
+}
+
 install_BXtest() {
     if [[ -e /usr/local/BXtest/ ]]; then
         rm -rf /usr/local/BXtest/
@@ -354,6 +402,7 @@ EOF
         echo -e "全新安装，请先参看教程：https://BXtest.v-50.me/，配置必要的内容"
         first_install=true
     else
+        migrate_sing_origin_dns
         if [[ x"${release}" == x"alpine" ]]; then
             service BXtest start
         else
