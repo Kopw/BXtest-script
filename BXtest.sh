@@ -1340,7 +1340,7 @@ bind-tcp 127.0.0.1:53
 force-AAAA-SOA yes
 
 ########## Cache / Log ##########
-cache-size 8192
+cache-size 32768
 cache-persist yes
 cache-file /var/cache/smartdns/smartdns.cache
 
