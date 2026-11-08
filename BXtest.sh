@@ -1287,6 +1287,10 @@ prompt_ai_dns_server() {
 }
 
 prompt_enable_ai_dns_routing() {
+    # 传入 none 表示不启用 AI 分流且不询问（安装脚本自动配置时使用）
+    if [[ "$1" == "none" ]]; then
+        return 1
+    fi
     if [[ -n "$1" ]]; then
         return 0
     fi
@@ -1294,8 +1298,26 @@ prompt_enable_ai_dns_routing() {
     confirm "是否启用非中国大陆 AI 服务 DNS 分流" "n"
 }
 
+# 能否经 IPv6 连到公共 DoT 上游（只看有没有 IPv6 地址不够，很多机器有地址但没有 IPv6 出口）
+has_ipv6_egress() {
+    local target
+    for target in 2606:4700:4700::1111 2001:4860:4860::8888; do
+        if timeout 5 bash -c "exec 3<>/dev/tcp/${target}/853" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 write_smartdns_config() {
     local ai_dns_server="$1"
+    local ipv6_upstream=false
+    if has_ipv6_egress; then
+        ipv6_upstream=true
+        echo -e "${green}检测到 IPv6 出口，smartdns 同时使用 IPv4 和 IPv6 上游${plain}"
+    else
+        echo -e "${yellow}未检测到 IPv6 出口，smartdns 只使用 IPv4 上游${plain}"
+    fi
     mkdir -p /etc/smartdns /var/cache/smartdns /var/log/smartdns
     if [[ -f /etc/smartdns/smartdns.conf ]]; then
         cp -a /etc/smartdns/smartdns.conf "/etc/smartdns/smartdns.conf.bak.$(date +%Y%m%d%H%M%S)"
@@ -1305,7 +1327,7 @@ write_smartdns_config() {
 ########################################
 # SmartDNS Config
 # - Listen: 127.0.0.1:53
-# - Upstream: Cloudflare & Google (IPv4 + IPv6 DoT)
+# - Upstream: Cloudflare & Google (DoT; IPv6 upstreams only when the server has IPv6 egress)
 ########################################
 
 ########## Listen ##########
@@ -1343,18 +1365,23 @@ max-reply-ip-num 2
 server-tls 1.1.1.1
 server-tls 1.0.0.1
 
-# === Cloudflare (IPv6 DoT) ===
-server-tls 2606:4700:4700::1111
-server-tls 2606:4700:4700::1001
-
 # === Google (IPv4 DoT) ===
 server-tls 8.8.8.8
 server-tls 8.8.4.4
+EOF
+
+    if [[ "$ipv6_upstream" == true ]]; then
+        cat >> /etc/smartdns/smartdns.conf <<EOF
+
+# === Cloudflare (IPv6 DoT) ===
+server-tls 2606:4700:4700::1111
+server-tls 2606:4700:4700::1001
 
 # === Google (IPv6 DoT) ===
 server-tls 2001:4860:4860::8888
 server-tls 2001:4860:4860::8844
 EOF
+    fi
 
     if [[ -n "$ai_dns_server" ]]; then
         cat >> /etc/smartdns/smartdns.conf <<EOF
@@ -1640,12 +1667,15 @@ PY
         fi
     fi
 
-    if [[ -f /etc/BXtest/hy2config.yaml ]]; then
-        cp -a /etc/BXtest/hy2config.yaml "/etc/BXtest/hy2config.yaml.bak.$(date +%Y%m%d%H%M%S)"
-        if ! python3 - <<'PY'
+    local hy2_config
+    for hy2_config in /etc/BXtest/hy2config*.yaml; do
+        [[ -f "$hy2_config" ]] || continue
+        cp -a "$hy2_config" "${hy2_config}.bak.$(date +%Y%m%d%H%M%S)"
+        if ! python3 - "$hy2_config" <<'PY'
+import sys
 from pathlib import Path
 
-path = Path("/etc/BXtest/hy2config.yaml")
+path = Path(sys.argv[1])
 lines = path.read_text().splitlines()
 out = []
 i = 0
@@ -1684,10 +1714,10 @@ if not inserted:
 path.write_text("\n".join(out) + "\n")
 PY
         then
-            echo -e "${red}更新 /etc/BXtest/hy2config.yaml 失败${plain}"
+            echo -e "${red}更新 ${hy2_config} 失败${plain}"
             return 1
         fi
-    fi
+    done
 }
 
 restart_smartdns_service() {
@@ -1832,6 +1862,11 @@ install_smartdns() {
         fi
         [[ $# == 0 ]] && before_show_menu
         return 1
+    fi
+
+    # BXtest 只在启动时读取 DNS 配置，切换到 smartdns 后需要重启才生效
+    if check_status >/dev/null 2>&1; then
+        restart 0
     fi
 
     echo -e "${green}smartdns 已安装并写入 /etc/smartdns/smartdns.conf${plain}"
@@ -2677,7 +2712,7 @@ show_usage() {
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
     echo "BXtest smartdns [AI_DNS] - 安装 smartdns，可选启用 AI 分流"
-    echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用"
+    echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用；传 none 时不启用也不询问"
     echo "BXtest hy2yaml      - 更新 Hysteria YAML 默认值并阻止 QUIC"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 到指定版本"

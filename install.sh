@@ -453,7 +453,7 @@ EOF
     echo "BXtest x25519       - 生成 x25519 密钥"
     echo "BXtest generate     - 生成 BXtest 配置文件"
     echo "BXtest smartdns [AI_DNS] - 安装 smartdns，可选启用 AI 分流"
-    echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用"
+    echo "                        不传 AI_DNS 时会询问是否启用；传入 AI_DNS 时直接启用；传 none 时不启用也不询问"
     echo "BXtest update       - 更新 BXtest"
     echo "BXtest update x.x.x - 更新 BXtest 指定版本"
     echo "BXtest install      - 安装 BXtest"
@@ -468,6 +468,9 @@ EOF
             source initconfig.sh
             rm initconfig.sh -f
             generate_config_file
+            # 生成配置后默认安装 smartdns，并让 BXtest 的 DNS 全部走本机 127.0.0.1:53（不启用 AI 分流）
+            echo -e "${green}正在安装 smartdns 并将 BXtest 的 DNS 指向本机 smartdns...${plain}"
+            BXtest smartdns none || echo -e "${yellow}smartdns 配置失败，可稍后手动执行 BXtest smartdns${plain}"
         fi
     fi
 }
