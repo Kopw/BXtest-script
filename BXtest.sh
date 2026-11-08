@@ -1344,6 +1344,16 @@ cache-size 32768
 cache-persist yes
 cache-file /var/cache/smartdns/smartdns.cache
 
+# 后台自动刷新：TTL 到期后 5 秒内去上游重查；1 天没人访问的域名不再刷新
+prefetch-domain yes
+serve-expired yes
+serve-expired-ttl 86400
+serve-expired-prefetch-time 5
+# 刷新前万一回了旧结果，只给 3 秒有效期
+serve-expired-reply-ttl 3
+# 有效期至少按 60 秒算，同一个域名最多每分钟刷新一次
+rr-ttl-min 60
+
 log-level notice
 log-file /var/log/smartdns/smartdns.log
 log-size 2M
