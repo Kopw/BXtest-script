@@ -920,7 +920,8 @@ resolver:
 sniff:
   enable: true
   timeout: 2s
-  rewriteDomain: false
+  # 用嗅探到的域名替换 IP 目标，由服务器自己按 IPv4 解析（客户端发来 IPv6 地址也能连）
+  rewriteDomain: true
   tcpPorts: all
   udpPorts: all
 EOF

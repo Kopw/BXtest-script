@@ -2482,7 +2482,8 @@ resolver:
 sniff:
   enable: true
   timeout: 2s
-  rewriteDomain: false
+  # 用嗅探到的域名替换 IP 目标，由服务器自己按 IPv4 解析（客户端发来 IPv6 地址也能连）
+  rewriteDomain: true
   tcpPorts: all
   udpPorts: all
 EOF
@@ -2631,8 +2632,22 @@ def ensure_quic_acl(items):
     return items[:inline_index + 1] + [rule_line] + items[inline_index + 1:]
 
 
+def ensure_sniff_rewrite(items):
+    existing = top_level_key_range(items, "sniff")
+    if not existing:
+        return items
+    start, end = existing
+    key_re = re.compile(r"^([ \t]+)rewriteDomain\s*:.*$")
+    for index in range(start + 1, end):
+        match = key_re.match(items[index])
+        if match:
+            return items[:index] + [f"{match.group(1)}rewriteDomain: true"] + items[index + 1:]
+    return items[:start + 1] + ["  rewriteDomain: true"] + items[start + 1:]
+
+
 lines = ensure_udp_redundancy(lines)
 lines = ensure_quic_acl(lines)
+lines = ensure_sniff_rewrite(lines)
 path.write_text("\n".join(lines) + "\n")
 PY
     then
