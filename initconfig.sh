@@ -209,7 +209,7 @@ issue_ip_cert() {
     # 安装证书到指定目录
     echo -e "${yellow}正在安装证书...${plain}"
     # 注意：不设置 reloadcmd 以避免自动重启 BXtest
-    # 证书更新后仅更新文件，BXtest 会在下次启动时自动加载新证书
+    # 证书更新后仅更新文件，BXtest 会监测证书文件并自动加载新证书，无需重启
     ~/.acme.sh/acme.sh --install-cert -d "$ip_addr" \
         --key-file "$cert_path/cert.key" \
         --fullchain-file "$cert_path/fullchain.cer" \
@@ -233,16 +233,18 @@ issue_ip_cert() {
 setup_daily_renewal() {
     local ip_addr=$1
     local os_type=$(detect_os)
-    # 每天早上 6:30 执行续期，使用 --force 强制更新
-    local cron_cmd="30 6 * * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh --force >/dev/null 2>&1"
+    # 每天早上 6:30 检查一次，到了续期时间（短期证书约签发后 3 天）才续签；
+    # 不加 --force，避免每天都重新签发而触发 Let's Encrypt 每 7 天 5 张的限额
+    local cron_cmd="30 6 * * * /root/.acme.sh/acme.sh --cron --home /root/.acme.sh >/dev/null 2>&1"
     
     # 先设置北京时区，确保 cron 按北京时间执行
     set_beijing_timezone
     
     # 检查是否已存在续期任务，如果存在则先删除旧的
-    if crontab -l 2>/dev/null | grep -q "acme.sh --cron"; then
+    # 只匹配 /root/.acme.sh 这一份，不动其他 acme.sh 安装（如单独签发其他域名的 --home）的续期任务
+    if crontab -l 2>/dev/null | grep -qF "/root/.acme.sh/acme.sh --cron"; then
         echo -e "${yellow}检测到旧的续期任务，正在更新...${plain}"
-        crontab -l 2>/dev/null | grep -v "acme.sh --cron" | crontab -
+        crontab -l 2>/dev/null | grep -vF "/root/.acme.sh/acme.sh --cron" | crontab -
     fi
     
     # 添加新的 cron 任务
